@@ -8,17 +8,18 @@ import streamlit as st
 import geopandas as gpd
 from st_aggrid import JsCode
 from datetime import datetime
-from openpyxl import Workbook
+from dotenv import load_dotenv
 from pysurveycto import SurveyCTOObject
-from openpyxl.utils.dataframe import dataframe_to_rows
 
+
+load_dotenv()
 
 CONFIG_YAML = 'app/config.yaml'
 JSON_DIR = 'app/json'
 IMG_DIR = 'app/images'
 DB_PATH = 'app/local.db'
 SERVER_NAME = 'risetkedaikopi'
-DASHBOARD_HOST = 'http://localhost:8501'
+DASHBOARD_HOST = os.getenv('DASHBOARD_HOST')
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # AUXILIARY FUNCTIONS
@@ -28,29 +29,6 @@ def set_page_config():
     if 'set_page_config' not in st.session_state:
         st.set_page_config(layout="wide")
         st.session_state.set_page_config = True
-    # custom style metrics
-    st_style = """
-    <style>
-    div[data-testid="metric-container"] {
-    background-color: #F4F8FF;
-    border: 1px solid #F4F8FF;
-    padding: 5% 5% 5% 10%;
-    border-radius: 25px;
-    color: #404040;
-    overflow-wrap: break-word;
-    }
-    /* breakline for metric text         */
-    div[data-testid="metric-container"] > label[data-testid="stMetricLabel"] > div {
-    overflow-wrap: break-word;
-    white-space: break-spaces;
-    color: red;
-    }
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    </style>
-    """
-    st.markdown(st_style, unsafe_allow_html=True)
 
 # load local lottie file
 def get_json(file):
@@ -453,13 +431,9 @@ def delete_rows_surveys(surveys_df, selected_rows):
     conn.close()
 
 # generate datamart
-@st.cache_data
 def generate_datamart(nama_survei):
     dm = datamart(DB_PATH, nama_survei)
     dm.load_all_tables()
-    # dm.get_number_location()
-    # dm.get_list_location()
-    # dm.get_agg_prov()
     return dm
 
 # load provinsi geojson
@@ -676,3 +650,26 @@ rowStyle_renderer = JsCode(
     }; 
 """
 )
+
+# custom style metrics
+st_style = """
+<style>
+div[data-testid="metric-container"] {
+background-color: #F4F8FF;
+border: 1px solid #F4F8FF;
+padding: 5% 5% 5% 10%;
+border-radius: 25px;
+color: #404040;
+overflow-wrap: break-word;
+}
+/* breakline for metric text         */
+div[data-testid="metric-container"] > label[data-testid="stMetricLabel"] > div {
+overflow-wrap: break-word;
+white-space: break-spaces;
+color: red;
+}
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+</style>
+"""

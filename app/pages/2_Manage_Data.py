@@ -16,6 +16,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 if 'set_page_config' not in st.session_state:
     set_page_config()
     st.session_state.set_page_config = True 
+st.markdown(st_style, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Authentication

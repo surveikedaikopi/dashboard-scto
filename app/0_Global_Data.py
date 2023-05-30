@@ -14,6 +14,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 # Set Page Layout
 
 set_page_config()
+st.markdown(st_style, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Authentication
