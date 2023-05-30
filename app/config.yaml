@@ -1,0 +1,17 @@
+credentials:
+  usernames:
+    taufikadinugraha:
+      email: taufik.adinugraha@gmail.com
+      name: Taufik Adi Nugraha
+      password: $2b$12$GcVkY7gbgiUSBjOkOUMDw.RV.jO22O4G44EFoshw8TMeYZMf.swHi # To be replaced with hashed password
+    kedaikopi24:
+      email: tatausdf@gmail.com
+      name: Kedai Kopi
+      password: $2b$12$mJEOzORLKugvzmGG4TB9ruXovjW9MWjt5FHiofi2qK.dHln0Da8ae # To be replaced with hashed password
+cookie:
+  expiry_days: 10
+  key: random_key # Must be string
+  name: cookie_dash_SCTO
+preauthorized:
+  emails:
+  - cocochico@gmail.com
