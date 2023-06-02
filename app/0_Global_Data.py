@@ -96,6 +96,7 @@ elif st.session_state.authentication_status:
         else:
             selected_category = st.sidebar.selectbox('Target Category', target_categories)
         st.session_state.selected_category = selected_category
+        dm.df_rekap_prov['Provinsi'] = dm.df_rekap_prov['prov_str'].apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x}</a>')
     else:
         selected_category = None
 
@@ -111,19 +112,15 @@ elif st.session_state.authentication_status:
     # Category Filter
     if selected_category is not None:
         filter_ = dm.df_rekap_prov[target_column] == selected_category
-        dm.ndf = dm.df[dm.df[target_column]==selected_category]
-        # set dataframe for get_agg_target
-        dm.tdf = dm.df
     else:
         filter_ = pd.Series([True] * len(dm.df_rekap_prov))
-        dm.ndf = dm.df
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Build Global Datamart
     
-    dm.get_total_number()
-    dm.get_list_location()
-    dm.get_agg_status()
+    dm.get_total_number(None, target_column, selected_category)
+    dm.get_list_location(target_column, selected_category)
+    dm.get_agg_status(None, target_column, selected_category)
     dm.get_number_location()
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -148,7 +145,6 @@ elif st.session_state.authentication_status:
     # ----------------------------------------------------------------------------------------------------------------------------
     # Review Status: Pie Chart
 
-    # @st.cache_data
     def status_piechart(data):
         # create doughnut chart
         fig = px.pie(data, values='Count', names='Status', hole=.6, color='Status', color_discrete_map=color_map2)
@@ -167,7 +163,6 @@ elif st.session_state.authentication_status:
 
     if target_column is not None:
         
-        # @st.cache_data
         def target_piechart(data):
             fig = px.bar(data, x='Target', y='Count', color='Status', color_discrete_map=color_map2)
             # set chart layout
@@ -181,7 +176,8 @@ elif st.session_state.authentication_status:
             # Show chart
             pie2.plotly_chart(fig, use_container_width=True)
 
-        target_piechart(dm.get_agg_target(target_column))
+        data = dm.df
+        target_piechart(dm.get_agg_target(data, target_column))
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Metrics: number of locations
@@ -189,10 +185,10 @@ elif st.session_state.authentication_status:
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric('Total Provinsi', dm.n_prov)
-    col2.metric('Total Kabupaten / Kota', dm.n_kab)
-    col3.metric('Total Kecamatan', dm.n_kec)
-    col4.metric('Total Kelurahan', dm.n_kel)
+    col1.metric('Target Provinsi', dm.n_prov)
+    col2.metric('Actual Kabupaten / Kota', dm.n_kab)
+    col3.metric('Actual Kecamatan', dm.n_kec)
+    col4.metric('Actual Kelurahan', dm.n_kel)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Distribution Map
@@ -205,24 +201,27 @@ elif st.session_state.authentication_status:
 
     # radio buttons
     st.sidebar.markdown("---")
-    options = ['Total Sample', 'Approved (%)', 'Rejected (%)', 'Awaiting (%)', 'Deficit']
+    options = ['Target (%)', 'Total Sample', 'Approved (%)', 'Rejected (%)', 'Awaiting (%)', 'Deficit']
     selected_option = st.sidebar.radio('Map Filter', options)
 
-    if selected_option == 'Total Sample':
+    if selected_option == 'Target (%)':
+        values = dm.df_rekap_prov[filter_]['Target_percent'].values
+        colormap = 'Sunset'
+    elif selected_option == 'Total Sample':
         values = dm.df_rekap_prov[filter_]['Sample'].values
-        colormap = 'sunsetdark'
+        colormap = 'matter'
     elif selected_option == 'Approved (%)':
         values = dm.df_rekap_prov[filter_]['Approved_percent'].values
-        colormap = 'ylgn'
+        colormap = 'YlGn'
     elif selected_option == 'Rejected (%)':
         values = dm.df_rekap_prov[filter_]['Rejected_percent'].values
         colormap = 'YlOrRd'
     elif selected_option == 'Awaiting (%)':
         values = dm.df_rekap_prov[filter_]['Awaiting_percent'].values
-        colormap = 'viridis'
+        colormap = 'Viridis'
     elif selected_option == 'Deficit':
         values = dm.df_rekap_prov[filter_]['Deficit'].values
-        colormap = 'viridis'
+        colormap = 'Reds'
 
     def draw_map(list_prov_map):
         fig = go.Figure()
@@ -234,7 +233,6 @@ elif st.session_state.authentication_status:
             colorscale=colormap,
             colorbar=dict(title=selected_option),
             hovertemplate='<b>%{location}</b><br>' + f'{selected_option}:' + ' %{z}<br>' + '<extra></extra>'
-            #'<b>%{location}</b><br>' + 'Value: %{z}<br>' + '<extra></extra>'
         ))
         # Update the layout of the figure
         fig.update_layout(
@@ -258,12 +256,13 @@ elif st.session_state.authentication_status:
             filter_selection = (dm.df_rekap_prov['prov_str'] == selected_provinsi_map) & (dm.df_rekap_prov[target_column] == selected_category)
         else:
             filter_selection = dm.df_rekap_prov['prov_str'] == selected_provinsi_map
-        data = dm.df_rekap_prov[filter_selection].drop(['prov_str', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent'], axis=1)
+        data = dm.df_rekap_prov[filter_selection]
+        data = data.drop(['prov_str', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent'], axis=1)
         gb = GridOptionsBuilder.from_dataframe(data)
         gb.configure_column('Provinsi', cellRenderer=cell_renderer)
         gridOptions = gb.build()
         gridOptions['getRowStyle'] = jscode2
-        AgGrid(data, gridOptions=gridOptions, fit_columns_on_grid_load=True,
+        AgGrid(data, gridOptions=gridOptions, fit_columns_on_grid_load=False,
                 allow_unsafe_jscode=True, height=65, update_mode=GridUpdateMode.VALUE_CHANGED)
             
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -279,26 +278,22 @@ elif st.session_state.authentication_status:
             title = 'Tabel Rekapitulasi Level Provinsi'
         st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
 
-        dropcols = ['prov_str', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent']
+        data = dm.df_rekap_prov[filter_].sort_values('prov_str')
+        dropcols = ['prov_str', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
         if target_column is not None:
             dropcols += [target_column]
-        data = dm.df_rekap_prov[filter_].drop(dropcols, axis=1)
+        data = data.drop(dropcols, axis=1)
         height = (1 + len(data)) * 29
 
         # Build Table
         gb = GridOptionsBuilder.from_dataframe(data)
-        gb.configure_column('Provinsi', cellRenderer=cell_renderer)
+        gb.configure_default_column(min_column_width=200)
+        gb.configure_column('Provinsi', cellRenderer=cell_renderer, pinned='left')
         gridOptions = gb.build()
         gridOptions['getRowStyle'] = jscode2
-        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
                 allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True,
-                update_mode=GridUpdateMode.VALUE_CHANGED)
-
-        # # Create a download button
-        # st.download_button(label='Download Pivot Table', 
-        #                    data=download_dataframe_as_excel(dm.df_rekap_all), 
-        #                    file_name=f'tabel_rekapitulasi_{nama_survei}.xlsx', 
-        #                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')                
+                update_mode=GridUpdateMode.VALUE_CHANGED)             
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Pivot Table
@@ -335,8 +330,48 @@ elif st.session_state.authentication_status:
         height = get_table_height(data)
 
         gb = GridOptionsBuilder.from_dataframe(data)
+        gb.configure_column('Link', cellRenderer=cell_link, pinned='right')
         gridOptions = gb.build()
         gridOptions['getRowStyle'] = jscode1
+
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
+                allow_unsafe_jscode=True, height=height, 
+                update_mode=GridUpdateMode.VALUE_CHANGED)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Duplicates By Respondent
+    st.markdown("---")
+
+    expander = st.expander('Duplicates By Respondent (Unfiltered)')
+    with expander:
+
+        data = dm.df[dm.df[['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'NAMA_RESPONDEN']].duplicated(keep=False)]
+        height = get_table_height(data)
+
+        gb = GridOptionsBuilder.from_dataframe(data)
+        gb.configure_column('Link', cellRenderer=cell_link, pinned='right')
+        gridOptions = gb.build()
+        gridOptions['getRowStyle'] = jscode1
+
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
+                allow_unsafe_jscode=True, height=height, 
+                update_mode=GridUpdateMode.VALUE_CHANGED)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Rejected Enumerators
+    st.markdown("---")
+
+    expander = st.expander('Rejected Enumerators (Unfiltered)')
+    with expander:
+
+        cols = ['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'NAMA_ENUM', 'review_status']
+        data = dm.df.groupby(cols).size().reset_index().sort_values([0, 'NAMA_ENUM'], ascending=False)
+        data.columns = cols + ['Rejected Count']
+        data = data[data['review_status']=='REJECTED'].drop(['review_status'], axis=1)
+        height = get_table_height(data)
+
+        gb = GridOptionsBuilder.from_dataframe(data)
+        gridOptions = gb.build()
 
         AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
                 allow_unsafe_jscode=True, height=height, 

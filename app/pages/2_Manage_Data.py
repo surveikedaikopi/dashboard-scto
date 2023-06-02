@@ -40,6 +40,7 @@ if st.session_state.authentication_status == False:
 elif st.session_state.authentication_status == None:
     st.warning('Please enter your username and password')
 elif st.session_state.authentication_status:
+    st.session_state.check = True
 
 # ----------------------------------------------------------------------------------------------------------------------------
 
@@ -60,60 +61,70 @@ elif st.session_state.authentication_status:
 
     # ------------------------------------------------------------------------------------------------------------
     # User Input
-    st.markdown("---")
 
-    title = 'Load New Survey'
-    st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
+    with st.form('Form'):
 
-    # Get survey name
-    survey_name = st.text_input("Survey Form ID:", key='survey_name')
+        title = 'Load New Survey'
+        st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
 
-    # Get decoders
-    with st.expander('Decoder'):
-        uploaded_file = st.file_uploader("Please follow the given template", accept_multiple_files=False, type=['xlsx'])
-        if uploaded_file is not None:
-            try:
-                fields = pd.read_excel(uploaded_file, sheet_name='FIELDS')
-                decoder = {}
-                for f in fields['FIELDS'].values:
-                    out = pd.read_excel(uploaded_file, sheet_name=f)
-                    out['CODE'] = out['CODE'].astype('str')
-                    out = out.set_index('CODE').to_dict()['LABEL']
-                    decoder.update({f: out})
-                    st.session_state.decoder = decoder
-            except:
-                st.error('There is something wrong with the file structure. Please look at the given template.')
+        # Get survey name
+        survey_name = st.text_input("Survey Form ID:", key='survey_name')
 
-    # Get number of target
-    options = ['Single Value', 'Multiple Values']
-    selected_option = st.radio("Target Per Kelurahan", options)
-    if selected_option == 'Single Value':
-        target_kelurahan = st.text_input("Number of Target Per Kelurahan:", key='target_kelurahan')
-    else:
-        uploaded_file = st.file_uploader("The table should contain ONLY 2 columns: 'KELURAHAN' & 'JML_TARGET'", accept_multiple_files=False, type=['csv', 'xlsx'])
-        if uploaded_file is not None:
-            map_target = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-            # check if columns are correct
-            if map_target.columns.tolist() != ['KELURAHAN', 'JML_TARGET']:
-                st.error('Columns are not correct.')
-            else:
-                map_target['KELURAHAN'] = map_target['KELURAHAN'].astype(str)
-                map_target = map_target.set_index('KELURAHAN')
-                target_kelurahan = map_target['JML_TARGET'].to_dict()
-                st.session_state.target_kelurahan = target_kelurahan
-    with st.expander('Advanced Options'):   
-        target_column = st.text_input("Target Column:", key='target_column')
+        # Get decoders
+        with st.expander('Decoder'):
+            uploaded_file1 = st.file_uploader("Please follow the given template", accept_multiple_files=False, type=['xlsx'], key='uploader1')
+            if uploaded_file1 is not None:
+                try:
+                    fields = pd.read_excel(uploaded_file1, sheet_name='FIELDS')
+                    decoder = {}
+                    for f in fields['FIELDS'].values:
+                        out = pd.read_excel(uploaded_file1, sheet_name=f)
+                        out['CODE'] = out['CODE'].astype('str')
+                        out = out.set_index('CODE').to_dict()['LABEL']
+                        decoder.update({f: out})
+                        st.session_state.decoder = decoder
+                except:
+                    st.error('There is something wrong with the file structure. Please look at the given template.')
+                    st.session_state.check = False
+
+        # Get target sample
+        with st.expander('Sample Target'):
+            uploaded_file2 = st.file_uploader("Please follow the given template", accept_multiple_files=False, type=['xlsx'], key='uploader2')
+            if uploaded_file2 is not None:
+                try:
+                    # get internal decoder for sanity check
+                    internal_decoder = get_internal_decoder()
+                    # load uploaded file to dataframe
+                    tmp = pd.read_excel(uploaded_file2)
+                    list_location, targets = {}, {}
+                    for col in ['PROV', 'KOTA_KAB', 'KEC', 'KEL']:
+                        # get target
+                        tmp[col] = tmp[col].str.upper()
+                        targets.update({col : tmp.groupby(col).sum('JML').to_dict()['JML']})
+                        # get list of locations
+                        list_location.update({col : tmp[col].str.upper().unique().tolist()})
+                        list_location[col].sort()
+                        # check consistency with internal database
+                        list_not_exist = [i for i in list_location[col] if i not in [j for _,j in internal_decoder[col].items()]]
+                        if len(list_not_exist) != 0:
+                            if col in ['PROV', 'KOTA_KAB']:
+                                st.error(f'{list_not_exist} do not exist in {col} database')
+                                st.stop()
+                            else:
+                                st.warning(f'{list_not_exist} do not exist in {col} database')
+                    # session state variables
+                    st.session_state.list_location = list_location
+                    st.session_state.targets = targets
+                except:
+                    st.error('There is something wrong with the file structure. Please look at the given template.')
+                    st.session_state.check = False
+
+        with st.expander('Advanced Options'):   
+            target_column = st.text_input("Target Column:", key='target_column')
 
     # ------------------------------------------------------------------------------------------------------------
     # Download
     
-    with st.form('Form'):
-
-        # SCTO Username
-        scto_account = st.text_input('SCTO Account:', key='scto_account')
-        # SCTO Password
-        scto_password = st.text_input('SCTO Password', type='password', key='scto_password')
-
         # Create the download button
         download_button = st.form_submit_button('Download Data')
 
@@ -122,9 +133,8 @@ elif st.session_state.authentication_status:
             # Check if name exists
             if survey_name in list_survei:
                 st.warning('form_id already exists')
-            # Check if target is specified
-            if target_kelurahan == '':
-                st.error('Specify the target')
+            elif not st.session_state.check:
+                st.warning('fix the error')
             else:
                 # download process
                 with st_lottie_spinner(get_lottie_wait(), height=200):
@@ -133,9 +143,9 @@ elif st.session_state.authentication_status:
                     try:
                         # download data
                         if 'decoder' in st.session_state:
-                            df = download_data(survey_name, st.session_state.decoder, scto_account, scto_password)
+                            df = download_data(survey_name, st.session_state.decoder)
                         else:
-                            df = download_data(survey_name, None, scto_account, scto_password)
+                            df = download_data(survey_name, None)
                         st.session_state.df = df
                         if target_column != '':
                             list_categories = df[st.session_state.target_column].unique()
@@ -175,26 +185,23 @@ elif st.session_state.authentication_status:
                 else:
                     target_column = None
                     target_column_values = None
-                if type(st.session_state.target_kelurahan) == dict:
-                    target_kelurahan = st.session_state.target_kelurahan
-                else:
-                    target_kelurahan = int(st.session_state.target_kelurahan)
-                if type(st.session_state.decoder) == dict:
+                    targets = st.session_state.targets
+                if 'decoder' in st.session_state:
                     decoder = st.session_state.decoder
                 else:
                     decoder = None
                 # Process data
-                with st_lottie_spinner(get_lottie_wait(), height=150):
+                with st_lottie_spinner(get_lottie_wait(), height=200):
                     # data preprocessing
-                    generate_datalake(survey_name, st.session_state.df, target_kelurahan, target_column, target_column_values)
+                    generate_datalake(survey_name, st.session_state.df, list_location, targets, target_column, target_column_values)
                     if type(target_column_values) == dict:
                         target_column_values = json.dumps(target_column_values)
-                    if type(st.session_state.target_kelurahan) == dict:
-                        target_kelurahan = json.dumps(st.session_state.target_kelurahan)
-                    if type(st.session_state.decoder) == dict:
+                    list_location = json.dumps(st.session_state.list_location)    
+                    targets = json.dumps(st.session_state.targets)
+                    if 'decoder' in st.session_state:
                         decoder = json.dumps(st.session_state.decoder)
                     # insert survey_name into 'list_surveys' table
-                    update_surveys_table(survey_name, target_kelurahan, target_column, target_column_values, decoder, st.session_state.scto_account, st.session_state.scto_password)            
+                    update_surveys_table(survey_name, list_location, targets, target_column, target_column_values, decoder)            
                     # Reload table
                     surveys_df, _, _, _ = get_survey_names()
                     # Clear cache
@@ -207,8 +214,8 @@ elif st.session_state.authentication_status:
     title = 'List of Surveys'
     st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
 
-    data = surveys_df.iloc[:,:-1]
-    height = get_table_height(data)
+    data = surveys_df.drop(['List Location', 'Target', 'Target Column Values', 'Decoder'], axis=1)
+    height = get_table_height(data) + 15
 
     gb = GridOptionsBuilder.from_dataframe(data)
     gb.configure_column('Selection', minWidth=90, maxWidth=90, editable=False, cellRenderer=checkbox_renderer)
@@ -235,3 +242,10 @@ elif st.session_state.authentication_status:
             st.cache_data.clear()
             st.experimental_rerun()
         
+    # ------------------------------------------------------------------------------------------------------------
+    # Templates
+    st.markdown("---")
+
+    with st.expander('Templates'):   
+        with open(TEMPLATE_FILE, "rb") as fp:
+            btn = st.download_button(label="Download", data=fp, file_name="templates.zip", mime="application/zip")
