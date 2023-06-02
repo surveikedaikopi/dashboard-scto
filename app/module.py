@@ -558,7 +558,8 @@ class datamart():
     #  get list of locations
     def get_list_location(self, target_column, selected_category):
         if target_column is not None:
-            self.list_provinsi = sorted(self.df_rekap_prov[self.df_rekap_prov[target_column]==selected_category]['prov_str'].unique().tolist())
+            # self.list_provinsi = sorted(self.df_rekap_prov[self.df_rekap_prov[target_column]==selected_category]['prov_str'].unique().tolist())
+            self.list_provinsi = sorted(self.df_rekap_prov['prov_str'].unique().tolist())
             self.list_kab_kota = sorted(self.df[self.df[target_column]==selected_category]['KOTA_KAB'].unique().tolist())
             self.list_kecamatan = sorted(self.df[self.df[target_column]==selected_category]['KEC'].unique().tolist())
             self.list_kelurahan = sorted(self.df[self.df[target_column]==selected_category]['KEL'].unique().tolist())
