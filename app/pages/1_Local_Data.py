@@ -1,10 +1,8 @@
 import sys
 sys.path.append('../')
-import yaml
 from module import *
 import streamlit as st
 import plotly.express as px
-from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
@@ -12,33 +10,35 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 # ----------------------------------------------------------------------------------------------------------------------------
 # Set Page Layout
 
-if 'set_page_config' not in st.session_state:
-    set_page_config()
-    st.session_state.set_page_config = True 
+st.set_page_config(page_title='Local Data - QC Dashboard', layout='wide', page_icon='☕')
 st.markdown(st_style, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # Authentication
 
-# Load config
-with open(CONFIG_YAML) as file:
-    config = yaml.load(file, Loader=SafeLoader)
-
 authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days'],
-    config['preauthorized']
+    auth_config['credentials'],
+    auth_config['cookie']['name'],
+    auth_config['cookie']['key'],
+    auth_config['cookie']['expiry_days'],
+    auth_config['preauthorized']
 )
 
-name, authentication_status, username = authenticator.login('Login', 'main')
+if 'authentication_status' in st.session_state:
+    if not st.session_state.authentication_status:
+        name, authentication_status, username = authenticator.login('Login', 'main')
+        if st.session_state.authentication_status == False:
+            st.error('Username/password is incorrect')
+        elif st.session_state.authentication_status == None:
+            st.warning('Please enter your username and password')
+else:
+    name, authentication_status, username = authenticator.login('Login', 'main')
+    if st.session_state.authentication_status == False:
+        st.error('Username/password is incorrect')
+    elif st.session_state.authentication_status == None:
+        st.warning('Please enter your username and password') 
 
-if st.session_state.authentication_status == False:
-    st.error('Username/password is incorrect')
-elif st.session_state.authentication_status == None:
-    st.warning('Please enter your username and password')
-elif st.session_state.authentication_status:
+if st.session_state.authentication_status:
 
 # ----------------------------------------------------------------------------------------------------------------------------
 
@@ -51,37 +51,69 @@ elif st.session_state.authentication_status:
     st.session_state.tabel_rekapitulasi = True
 
     # ----------------------------------------------------------------------------------------------------------------------------
-    # Define States
-
-    if 'nama_survei' in st.session_state:
-        nama_survei = st.experimental_set_query_params(nama_survei=st.session_state.nama_survei)
-    if 'selected_provinsi' in st.session_state:
-        selected_provinsi = st.experimental_set_query_params(selected_provinsi=st.session_state.selected_provinsi)
-    if 'selected_kab_kota' in st.session_state:
-        selected_kab_kota = st.experimental_set_query_params(selected_kab_kota=st.session_state.selected_kab_kota, selected_provinsi=st.session_state.selected_provinsi)
-    if 'selected_kecamatan' in st.session_state:
-        selected_kecamatan = st.experimental_set_query_params(selected_kecamatan=st.session_state.selected_kecamatan, selected_kab_kota=st.session_state.selected_kab_kota, selected_provinsi=st.session_state.selected_provinsi)
-    if 'selected_kelurahan' in st.session_state:
-        selected_kelurahan = st.experimental_set_query_params(selected_kelurahan=st.session_state.selected_kelurahan, selected_kecamatan=st.session_state.selected_kecamatan, selected_kab_kota=st.session_state.selected_kab_kota, selected_provinsi=st.session_state.selected_provinsi)
+    # Initiate URL Parameters
 
     query_params = st.experimental_get_query_params()
-    param_nama_survei = query_params.get('nama_survei', [None])
-    param_category = query_params.get('selected_category', [None])
-    param_provinsi = query_params.get('selected_provinsi', [None])
-    param_kab_kota = query_params.get('selected_kab_kota', [None])
-    param_kecamatan = query_params.get('selected_kecamatan', [None])
-    param_kelurahan = query_params.get('selected_kelurahan', [None])
+    url_params = {'nama_survei': query_params['nama_survei'][0] if 'nama_survei' in query_params else None,
+                  'selected_category': query_params['selected_category'][0] if 'selected_category' in query_params else None,
+                  'selected_provinsi': query_params['selected_provinsi'][0] if 'selected_provinsi' in query_params else None,
+                  'selected_kab_kota': query_params['selected_kab_kota'][0] if 'selected_kab_kota' in query_params else None,
+                  'selected_kecamatan': query_params['selected_kecamatan'][0] if 'selected_kecamatan' in query_params else None,
+                  'selected_kelurahan': query_params['selected_kelurahan'][0] if 'selected_kelurahan' in query_params else None}
 
-    # nama survei
-    if param_nama_survei[0] is not None:
-        nama_survei = param_nama_survei[0]
-    else:
+    # update URL parameters from the session states
+    if 'selected_kelurahan' in st.session_state:
+        url_params.update({'selected_kelurahan': st.session_state.selected_kelurahan}) 
+    elif 'selected_kecamatan' in st.session_state:
+        url_params.update({'selected_kecamatan': st.session_state.selected_kecamatan}) 
+    elif 'selected_kab_kota' in st.session_state:
+        url_params.update({'selected_kab_kota': st.session_state.selected_kab_kota}) 
+    elif 'selected_provinsi' in st.session_state:
+        url_params.update({'selected_provinsi': st.session_state.selected_provinsi})
+
+    # get 'nama survei' from session state
+    if 'nama_survei' in st.session_state:
+        url_params.update({'nama_survei': st.session_state.nama_survei})
+        if 'selected_category' in st.session_state:
+            url_params.update({'selected_category': st.session_state.selected_category})
+
+    nama_survei = url_params['nama_survei']
+    param_category = url_params['selected_category']
+    param_provinsi = url_params['selected_provinsi']
+    param_kab_kota = url_params['selected_kab_kota']
+    param_kecamatan = url_params['selected_kecamatan']
+    param_kelurahan = url_params['selected_kelurahan']
+
+    # get 'nama survei' from URL parameters
+    if nama_survei is None:
         nama_survei = list_survei[0]
+    st.session_state.nama_survei = nama_survei
+
+    # get target column
+    target_column = target_columns[nama_survei]
+    if target_column is None:
+        st.session_state.selected_category = None
 
     # ----------------------------------------------------------------------------------------------------------------------------
-    # Base Data Mart
+    # Survey Name Filter
 
-    # Build base datamart
+    idx = list_survei.index(nama_survei)
+    nama_survei = st.sidebar.selectbox('Nama Survei', list_survei, index=idx)
+    url_params.update({'nama_survei': nama_survei})
+
+    # Remove 'dm' state if nama_survei changes
+    if 'nama_survei' in st.session_state:
+        if nama_survei != st.session_state.nama_survei:
+            dm = generate_datamart(nama_survei)
+            st.session_state.dm = dm
+            st.session_state.nama_survei = nama_survei
+            target_column = target_columns[nama_survei]
+            if target_column is None:
+                st.session_state.selected_category = None
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Data Mart
+
     if 'dm' not in st.session_state:
         dm = generate_datamart(nama_survei)
         st.session_state.dm = dm
@@ -95,81 +127,69 @@ elif st.session_state.authentication_status:
     if target_column is not None:
         target_categories = dm.df[target_column].unique().tolist()
         target_categories.sort()
-        if param_category[0] is not None:
-            selected_category = st.sidebar.selectbox('Target Category', target_categories, index=target_categories.index(param_category[0]))
+        if param_category is not None:
+            selected_category = st.sidebar.selectbox('Target Category', target_categories, index=target_categories.index(param_category))
         else:
             selected_category = st.sidebar.selectbox('Target Category', target_categories)
-        st.sidebar.markdown("---")
-        if selected_category != param_category[0]:
-            st.session_state.change_selected_category = True
         st.session_state.selected_category = selected_category
+        url_params.update({'selected_category': selected_category})
     else:
         selected_category = None
+    st.sidebar.markdown("---")
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Category Filter
+
     if target_column is not None:
         filter_ = dm.df_rekap_prov[target_column] == selected_category
     else:
         filter_ = pd.Series([True] * len(dm.df_rekap_prov))
 
-    dm.get_list_location(target_column, selected_category)
+    dm.get_list_location(target_column)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Define Filters
 
     # provinsi
-    if param_provinsi[0] is not None:
-        selected_provinsi = st.sidebar.selectbox('Provinsi', dm.list_provinsi, index=dm.list_provinsi.index(param_provinsi[0]))
+    if param_provinsi is not None:
+        selected_provinsi = st.sidebar.selectbox('Provinsi', dm.list_provinsi, index=dm.list_provinsi.index(param_provinsi))
     else:
         selected_provinsi = st.sidebar.selectbox('Provinsi', dm.list_provinsi)
-    if selected_provinsi != param_provinsi[0]:
-        st.session_state.change_selected_provinsi = True
+    if selected_provinsi != param_provinsi:
+        st.session_state.change_selected_provinsi = True 
     st.session_state.selected_provinsi = selected_provinsi
-    if target_column is not None:
-        st.experimental_set_query_params(selected_provinsi=selected_provinsi, selected_category=selected_category)
-    else:
-        st.experimental_set_query_params(selected_provinsi=selected_provinsi)
+    url_params.update({'selected_provinsi': selected_provinsi})    
 
     # kab/kota
     list_kabkota_prov = [i for i in dm.list_kab_kota if i in dm.df[dm.df['PROV']==selected_provinsi]['KOTA_KAB'].tolist()] + ['ALL']
-    if (param_kab_kota[0] is not None) & ('change_selected_provinsi' not in st.session_state):
-        selected_kab_kota = st.sidebar.selectbox('Kabupaten/Kota', list_kabkota_prov, index=list_kabkota_prov.index(param_kab_kota[0]))
+    if (param_kab_kota is not None) & ('change_selected_provinsi' not in st.session_state):
+        selected_kab_kota = st.sidebar.selectbox('Kabupaten/Kota', list_kabkota_prov, index=list_kabkota_prov.index(param_kab_kota))
     else:
         selected_kab_kota = st.sidebar.selectbox('Kabupaten/Kota', list_kabkota_prov, index=list_kabkota_prov.index('ALL'))
-    if selected_kab_kota != param_kab_kota[0]:
+    if selected_kab_kota != param_kab_kota:
         st.session_state.change_selected_kab_kota = True
     st.session_state.selected_kab_kota = selected_kab_kota
-    if target_column is not None:
-        st.experimental_set_query_params(selected_kab_kota=selected_kab_kota, selected_provinsi=selected_provinsi, selected_category=selected_category)
-    else:
-        st.experimental_set_query_params(selected_kab_kota=selected_kab_kota, selected_provinsi=selected_provinsi)
+    url_params.update({'selected_kab_kota': selected_kab_kota}) 
 
     # kecamatan
     list_kec_kabkota = [i for i in dm.list_kecamatan if i in dm.df[dm.df['KOTA_KAB']==selected_kab_kota]['KEC'].tolist()] + ['ALL']
-    if (param_kecamatan[0] is not None) & ('change_selected_kab_kota' not in st.session_state):
-        selected_kecamatan = st.sidebar.selectbox('Kecamatan', list_kec_kabkota, index=list_kec_kabkota.index(param_kecamatan[0]))
+    if (param_kecamatan is not None) & ('change_selected_kab_kota' not in st.session_state):
+        selected_kecamatan = st.sidebar.selectbox('Kecamatan', list_kec_kabkota, index=list_kec_kabkota.index(param_kecamatan))
     else:
         selected_kecamatan = st.sidebar.selectbox('Kecamatan', list_kec_kabkota, index=list_kec_kabkota.index('ALL'))
-    if selected_kecamatan != param_kecamatan[0]:
+    if selected_kecamatan != param_kecamatan:
         st.session_state.change_selected_kecamatan = True
     st.session_state.selected_kecamatan = selected_kecamatan
-    if target_column is not None:
-        st.experimental_set_query_params(selected_kecamatan=selected_kecamatan, selected_kab_kota=selected_kab_kota, selected_provinsi=selected_provinsi, selected_category=selected_category)
-    else:
-        st.experimental_set_query_params(selected_kecamatan=selected_kecamatan, selected_kab_kota=selected_kab_kota, selected_provinsi=selected_provinsi)
+    url_params.update({'selected_kecamatan': selected_kecamatan}) 
 
     # kelurahan
     list_kel_kec = [i for i in dm.list_kelurahan if i in dm.df[dm.df['KEC']==selected_kecamatan]['KEL'].tolist()] + ['ALL']
-    if (param_kelurahan[0] is not None) & ('change_selected_kecamatan' not in st.session_state):
-        selected_kelurahan = st.sidebar.selectbox('Kelurahan', list_kel_kec, index=list_kel_kec.index(param_kelurahan[0]))
+    if (param_kelurahan is not None) & ('change_selected_kecamatan' not in st.session_state):
+        selected_kelurahan = st.sidebar.selectbox('Kelurahan', list_kel_kec, index=list_kel_kec.index(param_kelurahan))
     else:
         selected_kelurahan = st.sidebar.selectbox('Kelurahan', list_kel_kec, index=list_kel_kec.index('ALL'))
     st.session_state.selected_kelurahan = selected_kelurahan
-    if target_column is not None:
-        st.experimental_set_query_params(selected_kelurahan=selected_kelurahan, selected_kecamatan=selected_kecamatan, selected_kab_kota=selected_kab_kota, selected_provinsi=selected_provinsi, selected_category=selected_category)
-    else:
-        st.experimental_set_query_params(selected_kelurahan=selected_kelurahan, selected_kecamatan=selected_kecamatan, selected_kab_kota=selected_kab_kota, selected_provinsi=selected_provinsi)
+    url_params.update({'selected_kelurahan': selected_kelurahan}) 
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Get Selections
@@ -193,10 +213,6 @@ elif st.session_state.authentication_status:
     dm.get_total_number(selection1, target_column, selected_category)
     dm.get_agg_status(selection1, target_column, selected_category)
 
-    # set dataframe for get_agg_target
-    if target_column is not None:
-        dm.tdf = dm.df[selection1]
-
     # ----------------------------------------------------------------------------------------------------------------------------
     # Title and Subtitle
 
@@ -207,7 +223,7 @@ elif st.session_state.authentication_status:
         text = f'Target Category: {selected_category}'
         st.markdown(f"<h6 style='text-align: center; color: #5e6ff9;'>{text}</h6>", unsafe_allow_html=True)
 
-    # location info
+    # Location info
     text = f'PROV. {selected_provinsi}'
     if selected_kab_kota != 'ALL':
         text = f'{selected_kab_kota} --- ' + text
@@ -215,18 +231,18 @@ elif st.session_state.authentication_status:
             text = f'KEC. {selected_kecamatan} --- ' + text
             if selected_kelurahan != 'ALL':
                 text = f'KEL. {selected_kelurahan} --- '  + text
-    #     
     st.markdown(f"<h5 style='text-align: center; color: #8e44ad;'>{text}</h5>", unsafe_allow_html=True)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Metrics: total numbers
 
     st.markdown("---")
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric('Total Data', dm.n_data)
-    col2.metric('Total Responden', dm.n_resp)
-    col3.metric('Total KK', dm.n_kk)
-    col4.metric('Total Enumerator', dm.n_enum)
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric('Total Target', dm.n_target, dm.delta_n_target)
+    col2.metric('Total Data', dm.n_data, '.', delta_color='off')
+    col3.metric('Total Responden', dm.n_resp, '.', delta_color='off')
+    col4.metric('Total KK', dm.n_kk, '.', delta_color='off')
+    col5.metric('Total Enumerator', dm.n_enum, '.', delta_color='off')
     st.markdown("---")
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -241,14 +257,11 @@ elif st.session_state.authentication_status:
     # Review Status: Pie Chart
 
     def status_piechart(data):
-        # create doughnut chart
         fig = px.pie(data, values='Count', names='Status', hole=.6, color='Status', color_discrete_map=color_map2)
-        # set chart layout
         fig.update_layout(
             title='Review Status' if target_column is None else f'Review Status ({selected_category})',
             font=dict(size=16,),
         )
-        # Show chart
         pie1.plotly_chart(fig, use_container_width=True)
 
     status_piechart(dm.agg_status)
@@ -260,7 +273,6 @@ elif st.session_state.authentication_status:
         
         def target_piechart(data):
             fig = px.bar(data, x='Target', y='Count', color='Status', color_discrete_map=color_map2)
-            # set chart layout
             fig.update_layout(
                 barmode='group',
                 title='Status By Target Category',
@@ -268,7 +280,6 @@ elif st.session_state.authentication_status:
                 font=dict(size=16),
                 xaxis={'categoryorder': 'total descending'}
             )
-            # Show chart
             pie2.plotly_chart(fig, use_container_width=True)
 
         data = dm.df[selection1]
@@ -344,7 +355,7 @@ elif st.session_state.authentication_status:
 
             data = dm.df_rekap_all
             # category filter
-            if selected_category is not None:
+            if target_column is not None:
                 filter_ = data[target_column] == selected_category
                 title = f'Category: {selected_category}'
                 st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
@@ -368,9 +379,7 @@ elif st.session_state.authentication_status:
     # Raw Table
     st.markdown("---")
 
-    expander = st.expander('Raw Table (Filtered)')
-
-    with expander:
+    with st.expander('Raw Table (Filtered)'):
 
         if target_column is not None:
             filter_ = selection1 & (dm.df[target_column]==selected_category)
@@ -402,3 +411,15 @@ elif st.session_state.authentication_status:
     # Add logout button
     st.sidebar.markdown("---")
     authenticator.logout('Logout', 'sidebar')
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Set URL parameters
+    st.experimental_set_query_params(selected_category = url_params['selected_category'], 
+                                     selected_kelurahan = url_params['selected_kelurahan'], 
+                                     selected_kecamatan = url_params['selected_kecamatan'], 
+                                     selected_kab_kota = url_params['selected_kab_kota'], 
+                                     selected_provinsi = url_params['selected_provinsi'], 
+                                     nama_survei = url_params['nama_survei'])
+
+else:
+    draw_logo()

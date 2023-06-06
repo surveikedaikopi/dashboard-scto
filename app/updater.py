@@ -1,11 +1,27 @@
 import os
 os.chdir('/app')
-from module import *
+from module import download_data, generate_datalake
 import time
 import schedule
 from datetime import datetime
+from dotenv import load_dotenv
 
 
+
+# ------------------------------------------------------------------------------------
+
+load_dotenv()
+
+WORK_DIR = 'app'
+JSON_DIR = 'app/json'
+DB_PATH = 'app/local.db'
+DECODER_FILE = 'app/decoder.xlsx'
+SERVER_NAME = os.getenv('SERVER_NAME')
+DASHBOARD_HOST = os.getenv('DASHBOARD_HOST')
+SCTO_USERNAME = os.getenv('SCTO_USERNAME')
+SCTO_PASSWORD = os.getenv('SCTO_PASSWORD')
+
+# ------------------------------------------------------------------------------------
 
 def update():
     # load list_surveys table
@@ -18,22 +34,22 @@ def update():
         survey_name = df.loc[i,'Survey Name']
         last_download = df.loc[i,'Last Download']
         list_location = json.loads(df.loc[i,'List Location'])
+        wilayah = json.loads(df.loc[i,'Wilayah'])
         targets = json.loads(df.loc[i,'Target'])
         target_column = df.loc[i,'Target Column']
-        try:
-            target_column_values = json.loads(df.loc[i,'Target Column Values'])
-        except:
-            target_column_values = None
         try:
             decoder = json.loads(df.loc[i,'Decoder'])
         except:
             decoder = None
     
         # download data
-        df = download_data(survey_name, decoder)
+        df = download_data(survey_name, wilayah, decoder)
         
         # data preprocessing
-        generate_datalake(survey_name, df, list_location, targets, target_column, target_column_values)
+        conn = sqlite3.connect(DB_PATH)
+        metadata = pd.read_sql_query(f'SELECT * FROM {survey_name}_metadata', conn)
+        conn.close()
+        generate_datalake(survey_name, df, list_location, targets, target_column, metadata)
         
         # update last_download in list_surveys table
         conn = sqlite3.connect(DB_PATH)
@@ -55,7 +71,7 @@ def update():
 schedule.every().hour.do(update)
 
 # Set the start and end time for the schedule
-for i in range(7,22):
+for i in range(6,22):
     if i < 10:
         schedule.every().day.at(f"0{i}:00").do(update)
         schedule.every().day.at(f"0{i}:30").do(update)

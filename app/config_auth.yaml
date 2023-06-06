@@ -1,0 +1,21 @@
+credentials:
+  usernames:
+    admin:
+      email: admin@gmail.com
+      name: administrator
+      password: $2b$12$Q4.IQunHYe9h5ZtZ/HRFY.E7W0PSksw2VLWaZE/0yqz7QDhML6Te6
+    viewer:
+      email: viewer@gmail.com
+      name: viewers only
+      password: $2b$12$JQnkdgLN4sVb9vPqMH//U.CS/X9y20VtJqZ.voRB12vgqcBmBfl5W
+    manager:
+      email: manager@gmail.com
+      name: data manager
+      password: $2b$12$qMHeLBDm6af1nMxf0wcWwuac3b.Agdb1mJ7ECAyILpwD482FXaINm
+cookie:
+  expiry_days: 1
+  key: random_key # Must be string
+  name: cookie_dash_SCTO
+preauthorized:
+  emails:
+  - admin@gmail.com

@@ -1,6 +1,5 @@
 import os
 import json
-import yaml
 import sqlite3
 import numpy as np
 import pandas as pd
@@ -10,26 +9,31 @@ import geopandas as gpd
 from st_aggrid import JsCode
 from datetime import datetime
 from dotenv import load_dotenv
-from yaml.loader import SafeLoader
 from pysurveycto import SurveyCTOObject
 
 
 load_dotenv()
 
 WORK_DIR = 'app'
+CONFIG_YAML = 'app/config.yaml'
 JSON_DIR = 'app/json'
 IMG_DIR = 'app/images'
 DB_PATH = 'app/local.db'
 TEMPLATE_FILE = 'app/templates.zip'
 DECODER_FILE = 'app/decoder.xlsx'
-AUTHENTICATION_YAML = 'app/config_auth.yaml'
-SERVER_NAME = os.getenv('SERVER_NAME')
+SERVER_NAME = 'risetkedaikopi'
 DASHBOARD_HOST = os.getenv('DASHBOARD_HOST')
 SCTO_USERNAME = os.getenv('SCTO_USERNAME')
 SCTO_PASSWORD = os.getenv('SCTO_PASSWORD')
 
 # ----------------------------------------------------------------------------------------------------------------------------
 # AUXILIARY FUNCTIONS
+
+# page config
+def set_page_config():
+    if 'set_page_config' not in st.session_state:
+        st.set_page_config(layout="wide")
+        st.session_state.set_page_config = True
 
 # load local lottie file
 def get_json(file):
@@ -40,10 +44,6 @@ def get_json(file):
 @st.cache_data
 def get_lottie_wait():
     return get_json(os.path.join(JSON_DIR, 'coffee.json'))
-
-@st.cache_data
-def get_lottie_forbidden():
-    return get_json(os.path.join(JSON_DIR, 'forbidden.json'))
 
 # get table height
 def get_table_height(data):
@@ -59,13 +59,12 @@ def create_empty_table():
     sql_create_table = """
         CREATE TABLE IF NOT EXISTS list_surveys (
             Selection BOOLEAN,
-            "Survey Name" STR,
-            "Form ID" STR,
+            "Survey Name" TEXT,
             "Last Download" TIMESTAMP,
             "List Location" TEXT,
-            Wilayah TEXT,
-            Target TEXT,
-            "Target Column" STR,
+            "Target" TEXT,
+            "Target Column" STR, 
+            "Target Column Values" TEXT,
             Decoder TEXT
         );
     """
@@ -89,19 +88,18 @@ def get_survey_names():
         targets.append(df.loc[i,'Target Column'])
     update_time = {k:v for k,v in zip(list_surveys, download_time)}
     target_columns = {k:v for k,v in zip(list_surveys, targets)}
-    list_surveys.sort()
     return df, list_surveys, update_time, target_columns
 
 # update surveys table
-def update_surveys_table(survey_name, form_id, list_location, wilayah, targets, target_column, decoder):
+def update_surveys_table(survey_name, list_location, targets, target_column, target_column_values, decoder):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     insert_sql = '''
-        INSERT INTO list_surveys ("Selection", "Survey Name", "Form ID", "Last Download", "List Location", "Wilayah", "Target", "Target Column", "Decoder")
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO list_surveys ("Selection", "Survey Name", "Last Download", "List Location", "Target", "Target Column", "Target Column Values", "Decoder")
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     '''
     update_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute(insert_sql, (False, survey_name, form_id, update_time, list_location, wilayah, targets, target_column, decoder))
+    cursor.execute(insert_sql, (False, survey_name, update_time, list_location, targets, target_column, target_column_values, decoder))
     conn.commit()
     conn.close()
 
@@ -117,11 +115,11 @@ def get_internal_decoder():
     return internal_decoder
 
 # download
-def download_data(form_id, wilayah, decoder):
+def download_data(survey_name, decoder):
     # build connection to SurveyCTO server
     scto = SurveyCTOObject(SERVER_NAME, SCTO_USERNAME, SCTO_PASSWORD)
     # donwload data as json
-    res = scto.get_form_data(form_id, format='json', shape='wide', review_status=['approved', 'rejected', 'pending'])
+    res = scto.get_form_data(survey_name, format='json', shape='wide', review_status=['approved', 'rejected', 'pending'])
     # build dataframe
     df = pd.DataFrame(res)
     # used fields
@@ -154,16 +152,13 @@ def download_data(form_id, wilayah, decoder):
     # fix "LAINNYA" in KEC & KEL
     for f in ['KEC', 'KEL']:
         df[f] = df.apply(lambda x : x[f'{f}_LAINNYA'] if x[f] == 'TIDAK DIKENALI' else x[f], axis=1)
-    # WILAYAH
-    df['WILAYAH'] = df['KEL'].map(wilayah).values
     # link KEY to Survey CTO server
     df['Link'] = df['KEY'].apply(lambda x : x.split('uuid:')[-1])
     df['Link'] = df['Link'].apply(lambda x : f'<a href="https://{SERVER_NAME}.surveycto.com/view/submission.html?uuid=uuid%3A{x}" target="_blank">link</a>')
     return df.drop(['KEC_LAINNYA', 'KEL_LAINNYA', 'KEY'], axis=1)
 
-
 # generate datalake
-def generate_datalake(survey_name, df, list_location, targets, target_column, metadata):
+def generate_datalake(survey_name, df, list_location, targets, target_column, target_column_values):
 
     # -------------------------------------------------------------------------------------------------
     # tabel rekapitulasi
@@ -207,43 +202,17 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
     else:
         cols = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', 'Sample', 'Approved', 'Rejected']
     rekap.columns = cols
-    # add empty samples
-    if target_column is not None:
-        tmp = metadata.melt(id_vars=['PROV', 'KOTA_KAB', 'KEC', 'KEL'], value_vars=targets.keys())
-        for cat in targets.keys():
-            list_exist = rekap[rekap[target_column]==cat]['Kelurahan'].unique().tolist() 
-            for kel in [i for i in list_location[cat]['KEL'] if i not in list_exist]:
-                select = (tmp['KEL']==kel) & (tmp['variable']==cat)
-                prov = tmp[select]['PROV'].values[0]
-                kab = tmp[select]['KOTA_KAB'].values[0]
-                kec = tmp[select]['KEC'].values[0]
-                vals = {'Provinsi': prov, 'Kabupaten/Kota': kab, 'Kecamatan': kec, 'Kelurahan': kel, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['PROV'][prov]}
-                rekap = rekap.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap['Kelurahan'].unique().tolist() 
-        for kel in [i for i in list_location['KEL'] if i not in list_exist]:
-            select = metadata['KEL']==kel
-            prov = metadata[select]['PROV'].values[0]
-            kab = metadata[select]['KOTA_KAB'].values[0]
-            kec = metadata[select]['KEC'].values[0]
-            vals = {'Provinsi': prov, 'Kabupaten/Kota': kab, 'Kecamatan': kec, 'Kelurahan': kel, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['PROV'][prov]}
-            rekap = rekap.append(vals, ignore_index=True)
     # add more features
     rekap['Awaiting'] = rekap['Sample'] - rekap['Approved'] - rekap['Rejected']
     # set target
+    rekap['Target'] = rekap['Kelurahan'].map(targets['KEL'])
+    rekap['Target'] = rekap['Target'].fillna(0).astype(int)
     if target_column is not None:
-        rekap['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap[rekap[target_column]==cat].index
-            rekap.loc[idx,'Target'] = rekap.loc[idx,'Kelurahan'].map(targets[cat]['KEL']).values
-    else:
-        rekap['Target'] = rekap['Kelurahan'].map(targets['KEL'])
-        rekap['Target'] = rekap['Target'].fillna(0).astype(int)
+        rekap['Target'] = rekap[target_column].map(target_column_values) / 100 * rekap['Target']
+        rekap['Target'] = np.ceil(rekap['Target']).astype('int')
     # deficit
     rekap['Deficit'] = rekap['Target'] - rekap['Approved']
     rekap['Deficit'] = np.where(rekap['Deficit']<0, 0, rekap['Deficit'])
-    cols = ['Sample', 'Approved', 'Rejected', 'Awaiting', 'Target', 'Deficit']
-    rekap[cols] = rekap[cols].fillna(0).astype(int)
     # reorder columns
     if target_column is not None:
         new_column_order = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
@@ -265,12 +234,10 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_prov = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_prov.columns = ['Provinsi', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_prov['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_prov[rekap_prov[target_column]==cat].index
-            rekap_prov.loc[idx,'Target'] = rekap_prov.loc[idx,'Provinsi'].map(targets[cat]['PROV']).values
-        # clean up
+        # target
+        rekap['id'] = rekap.apply(lambda x : f'{x.Provinsi}_{x[target_column]}', axis=1)
+        dict_target = rekap.groupby('id')['Target'].sum().to_dict()
+        rekap_prov['Target'] = rekap_prov['loc_id'].map(dict_target)
         rekap_prov.drop(['loc_id'], axis=1)
     else:
         tmp1 = df.groupby(['PROV']).size().reset_index()
@@ -280,21 +247,14 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2, how='left', on='PROV').fillna(0)
         rekap_prov = pd.merge(tmp, tmp3, how='left', on='PROV').fillna(0)
         rekap_prov.columns = ['Provinsi', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_prov['Target'] = rekap_prov['Provinsi'].map(targets['PROV'])
-        rekap_prov['Target'] = rekap_prov['Target'].fillna(0).astype(int)
+        # target
+        dict_target = rekap.groupby('Provinsi')['Target'].sum().to_dict()
+        rekap_prov['Target'] = rekap_prov['Provinsi'].map(dict_target)
     # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_prov[rekap_prov[target_column]==cat]['Provinsi'].unique().tolist() 
-            for prov in [i for i in list_location[cat]['PROV'] if i not in list_exist]:
-                vals = {'Provinsi': prov, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['PROV'][prov]}
-                rekap_prov = rekap_prov.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_prov['Provinsi'].unique().tolist() 
-        for prov in [i for i in list_location['PROV'] if i not in list_exist]:
-            vals = {'Provinsi': prov, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['PROV'][prov]}
-            rekap_prov = rekap_prov.append(vals, ignore_index=True)
+    list_exist = rekap_prov['Provinsi'].unique().tolist()
+    for prov in [i for i in list_location['PROV'] if i not in list_exist]:
+        vals = {'Provinsi': prov, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['PROV'][prov]}
+        rekap_prov = rekap_prov.append(vals, ignore_index=True)
     # add more features
     rekap_prov['Awaiting'] = rekap_prov['Sample'] - rekap_prov['Approved'] - rekap_prov['Rejected']   
     rekap_prov['Deficit'] = rekap_prov['Target'] - rekap_prov['Approved']
@@ -334,12 +294,10 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_kab = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_kab.columns = ['Kabupaten/Kota', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_kab['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_kab[rekap_kab[target_column]==cat].index
-            rekap_kab.loc[idx,'Target'] = rekap_kab.loc[idx,'Kabupaten/Kota'].map(targets[cat]['KOTA_KAB']).values
-        # clean up
+        # target
+        rekap['id'] = rekap.apply(lambda x : f"{x['Kabupaten/Kota']}_{x[target_column]}", axis=1)
+        dict_target = rekap.groupby('id')['Target'].sum().to_dict()
+        rekap_kab['Target'] = rekap_kab['loc_id'].map(dict_target)
         rekap_kab.drop(['loc_id'], axis=1)
     else:
         tmp1 = df.groupby(['KOTA_KAB']).size().reset_index()
@@ -349,21 +307,14 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2, how='left', on='KOTA_KAB').fillna(0)
         rekap_kab = pd.merge(tmp, tmp3, how='left', on='KOTA_KAB').fillna(0)
         rekap_kab.columns = ['Kabupaten/Kota', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_kab['Target'] = rekap_kab['Kabupaten/Kota'].map(targets['KOTA_KAB'])
-        rekap_kab['Target'] = rekap_kab['Target'].fillna(0).astype(int)
+        # target
+        dict_target = rekap.groupby('Kabupaten/Kota')['Target'].sum().to_dict()
+        rekap_kab['Target'] = rekap_kab['Kabupaten/Kota'].map(dict_target)
     # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_kab[rekap_kab[target_column]==cat]['Kabupaten/Kota'].unique().tolist()
-            for kab in [i for i in list_location[cat]['KOTA_KAB'] if i not in list_exist]:
-                vals = {'Kabupaten/Kota': kab, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KOTA_KAB'][kab]}
-                rekap_kab = rekap_kab.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_kab['Kabupaten/Kota'].unique().tolist()
-        for kab in [i for i in list_location['KOTA_KAB'] if i not in list_exist]:
-            vals = {'Kabupaten/Kota': kab, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KOTA_KAB'][kab]}
-            rekap_kab = rekap_kab.append(vals, ignore_index=True)
+    list_exist = rekap_kab['Kabupaten/Kota'].unique().tolist()
+    for kab in [i for i in list_location['KOTA_KAB'] if i not in list_exist]:
+        vals = {'Kabupaten/Kota': kab, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KOTA_KAB'][kab]}
+        rekap_kab = rekap_kab.append(vals, ignore_index=True)
     # add more features
     rekap_kab['Awaiting'] = rekap_kab['Sample'] - rekap_kab['Approved'] - rekap_kab['Rejected']   
     rekap_kab['Deficit'] = rekap_kab['Target'] - rekap_kab['Approved']
@@ -392,12 +343,10 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_kec = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_kec.columns = ['Kecamatan', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_kec['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_kec[rekap_kec[target_column]==cat].index
-            rekap_kec.loc[idx,'Target'] = rekap_kec.loc[idx,'Kecamatan'].map(targets[cat]['KEC']).values
-        # clean up
+        # target
+        rekap['id'] = rekap.apply(lambda x : f"{x['Kecamatan']}_{x[target_column]}", axis=1)
+        dict_target = rekap.groupby('id')['Target'].sum().to_dict()
+        rekap_kec['Target'] = rekap_kec['loc_id'].map(dict_target)
         rekap_kec.drop(['loc_id'], axis=1)
     else:
         tmp1 = df.groupby(['KEC']).size().reset_index()
@@ -407,21 +356,14 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2, how='left', on='KEC').fillna(0)
         rekap_kec = pd.merge(tmp, tmp3, how='left', on='KEC').fillna(0)
         rekap_kec.columns = ['Kecamatan', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_kec['Target'] = rekap_kec['Kecamatan'].map(targets['KEC'])
-        rekap_kec['Target'] = rekap_kec['Target'].fillna(0).astype(int)
+        # target
+        dict_target = rekap.groupby('Kecamatan')['Target'].sum().to_dict()
+        rekap_kec['Target'] = rekap_kec['Kecamatan'].map(dict_target)
     # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_kec[rekap_kec[target_column]==cat]['Kecamatan'].unique().tolist()
-            for kec in [i for i in list_location[cat]['KEC'] if i not in list_exist]:
-                vals = {'Kecamatan': kec, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KEC'][kec]}
-                rekap_kec = rekap_kec.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_kec['Kecamatan'].unique().tolist()
-        for kec in [i for i in list_location['KEC'] if i not in list_exist]:
-            vals = {'Kecamatan': kec, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEC'][kec]}
-            rekap_kec = rekap_kec.append(vals, ignore_index=True)
+    list_exist = rekap_kec['Kecamatan'].unique().tolist()
+    for kec in [i for i in list_location['KEC'] if i not in list_exist]:
+        vals = {'Kecamatan': kec, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEC'][kec]}
+        rekap_kec = rekap_kec.append(vals, ignore_index=True)
     # add more features
     rekap_kec['Awaiting'] = rekap_kec['Sample'] - rekap_kec['Approved'] - rekap_kec['Rejected']   
     rekap_kec['Deficit'] = rekap_kec['Target'] - rekap_kec['Approved']
@@ -450,12 +392,10 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_kel = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
         rekap_kel.columns = ['Kelurahan', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_kel['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_kel[rekap_kel[target_column]==cat].index
-            rekap_kel.loc[idx,'Target'] = rekap_kel.loc[idx,'Kelurahan'].map(targets[cat]['KEL']).values
-        # clean up
+        # target
+        rekap['id'] = rekap.apply(lambda x : f"{x['Kelurahan']}_{x[target_column]}", axis=1)
+        dict_target = rekap.groupby('id')['Target'].sum().to_dict()
+        rekap_kel['Target'] = rekap_kel['loc_id'].map(dict_target)
         rekap_kel.drop(['loc_id'], axis=1)
     else:
         tmp1 = df.groupby(['KEL']).size().reset_index()
@@ -465,21 +405,14 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
         tmp = pd.merge(tmp1, tmp2, how='left', on='KEL').fillna(0)
         rekap_kel = pd.merge(tmp, tmp3, how='left', on='KEL').fillna(0)
         rekap_kel.columns = ['Kelurahan', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_kel['Target'] = rekap_kel['Kelurahan'].map(targets['KEL'])
-        rekap_kel['Target'] = rekap_kel['Target'].fillna(0).astype(int)
+        # target
+        dict_target = rekap.groupby('Kelurahan')['Target'].sum().to_dict()
+        rekap_kel['Target'] = rekap_kel['Kelurahan'].map(dict_target)
     # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_kel[rekap_kel[target_column]==cat]['Kelurahan'].unique().tolist()
-            for kel in [i for i in list_location[cat]['KEL'] if i not in list_exist]:
-                vals = {'Kelurahan': kel, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KEL'][kel]}
-                rekap_kel = rekap_kel.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_kel['Kelurahan'].unique().tolist()
-        for kel in [i for i in list_location['KEL'] if i not in list_exist]:
-            vals = {'Kelurahan': kel, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEL'][kel]}
-            rekap_kel = rekap_kel.append(vals, ignore_index=True)
+    list_exist = rekap_kel['Kelurahan'].unique().tolist()
+    for kel in [i for i in list_location['KEL'] if i not in list_exist]:
+        vals = {'Kelurahan': kel, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEL'][kel]}
+        rekap_kel = rekap_kel.append(vals, ignore_index=True)
     # add more features
     rekap_kel['Awaiting'] = rekap_kel['Sample'] - rekap_kel['Approved'] - rekap_kel['Rejected']   
     rekap_kel['Deficit'] = rekap_kel['Target'] - rekap_kel['Approved']
@@ -490,6 +423,7 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
     # reorder columns
     if target_column is not None:
         new_column_order = ['Kelurahan', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
+        rekap = rekap.drop(['id'], axis=1)
     else:
         new_column_order = ['Kelurahan', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
     rekap_kel = rekap_kel[new_column_order]
@@ -498,7 +432,6 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
     # save to DB
     conn = sqlite3.connect(DB_PATH)
     df.to_sql(survey_name, conn, if_exists='replace', index=False)
-    metadata.to_sql(f'{survey_name}_metadata', conn, if_exists='replace', index=False)
     rekap.to_sql(f'{survey_name}_rekap_all', conn, if_exists='replace', index=False)
     rekap_prov.to_sql(f'{survey_name}_rekap_prov', conn, if_exists='replace', index=False)
     rekap_kab.to_sql(f'{survey_name}_rekap_kab', conn, if_exists='replace', index=False) 
@@ -581,8 +514,6 @@ class datamart():
 
     # load all tables
     def load_all_tables(self):
-        self.list_surveys = self.load_table('list_surveys')
-        self.list_surveys = self.list_surveys[self.list_surveys['Survey Name']==self.nama_survei]
         self.df = self.load_table(self.nama_survei)
         self.df_rekap_all = self.load_table(table=f'{self.nama_survei}_rekap_all')
         self.df_rekap_prov = self.load_table(table=f'{self.nama_survei}_rekap_prov')
@@ -592,90 +523,50 @@ class datamart():
 
     # get total numbers of people
     def get_total_number(self, location_filter, target_column, selected_category):
-        dd = json.loads(self.list_surveys['Target'].values[0])
         if location_filter is not None:
             if target_column is not None:
                 filter_ = (self.df[target_column]==selected_category) & location_filter
-                loc = [(col,self.df[filter_][col].unique()[0]) for col in ['PROV', 'KOTA_KAB', 'KEC', 'KEL'] if self.df[filter_][col].nunique() == 1]
-                try:
-                    self.n_target = dd[selected_category][loc[-1][0]][loc[-1][1]]
-                    approved = len(self.df[(self.df['review_status']=='APPROVED')&(self.df[target_column]==selected_category)&filter_])
-                except:
-                    self.n_target = 0
-                    approved = 0
             else:
                 filter_ = pd.Series([True] * len(self.df)) & location_filter
-                loc = [(col,self.df[filter_][col].unique()[0]) for col in ['PROV', 'KOTA_KAB', 'KEC', 'KEL'] if self.df[filter_][col].nunique() == 1]
-                try:
-                    self.n_target = dd[loc[-1][0]][loc[-1][1]]
-                    approved = len(self.df[(self.df['review_status']=='APPROVED')&filter_])
-                except:
-                    self.n_target = 0
-                    approved = 0
         else:
             if target_column is not None:
                 filter_ = self.df[target_column]==selected_category
-                self.n_target = np.sum([v for _,v in dd[selected_category]['PROV'].items()])
-                approved = len(self.df[(self.df['review_status']=='APPROVED')&(self.df[target_column]==selected_category)])
             else:
-                filter_ = pd.Series([True] * len(self.df))
-                self.n_target = np.sum([v for _,v in dd['PROV'].items()])
-                approved = len(self.df[self.df['review_status']=='APPROVED'])
-        # deficit
-        self.delta_n_target = approved - self.n_target
-        self.delta_n_target = '.' if self.delta_n_target==0 else '+'+str(self.delta_n_target) if self.delta_n_target>0 else str(self.delta_n_target)
-        # others
+                filter_ = pd.Series([True] * len(self.df))            
         self.n_data = len(self.df[filter_])
         cols = ['PROV', 'KOTA_KAB', 'KEC', 'KEL']
-        self.n_resp = len(self.df[filter_].groupby(cols+['NAMA_KK', 'NAMA_RESPONDEN']).size().values)
+        self.n_resp = len(self.df[filter_].groupby(cols+['NAMA_RESPONDEN']).size().values)
         self.n_enum = len(self.df[filter_].groupby(cols+['NAMA_ENUM']).size().values)
         self.n_kk = len(self.df[filter_].groupby(cols+['NAMA_KK']).size().values)
 
     # get number of locations
-    def get_number_location(self, target_column, selected_category):
-        data = self.list_surveys
-        # planned
-        list_location = json.loads(data['List Location'].values[0])
-        if target_column is not None:
-            self.n_prov = len(list_location[selected_category]['PROV'])
-            self.n_kab = len(list_location[selected_category]['KOTA_KAB'])
-            self.n_kec = len(list_location[selected_category]['KEC'])
-            self.n_kel = len(list_location[selected_category]['KEL'])
-        else:
-            self.n_prov = len(list_location['PROV'])
-            self.n_kab = len(list_location['KOTA_KAB'])
-            self.n_kec = len(list_location['KEC'])
-            self.n_kel = len(list_location['KEL'])
-        # actual
-        actual_n_prov = self.df['PROV'].nunique()
-        actual_n_kab = self.df['KOTA_KAB'].nunique()
-        actual_n_kec = self.df['KEC'].nunique()
-        actual_n_kel = self.df['KEL'].nunique()  
-        # remove unknown location
-        if 'TIDAK DIKENALI' in self.df_rekap_prov[self.df_rekap_prov['Sample']!=0]['prov_str'].tolist():
-            actual_n_prov -= 1
-        if ['TIDAK DIKENALI', ''] in self.df['KOTA_KAB'].unique().tolist():
-            actual_n_kab -= 1
-        if ['TIDAK DIKENALI', ''] in self.df['KEC'].unique().tolist():
-            actual_n_kec -= 1
-        if ['TIDAK DIKENALI', ''] in self.df['KEL'].unique().tolist():
-            actual_n_kel -= 1
-        # difference
-        self.delta_n_prov = actual_n_prov - self.n_prov
-        self.delta_n_prov = '.' if self.delta_n_prov==0 else '+'+str(self.delta_n_prov) if self.delta_n_prov>0 else str(self.delta_n_prov)
-        self.delta_n_kab = self.n_kab - actual_n_kab
-        self.delta_n_kab = '.' if self.delta_n_kab==0 else '+'+str(self.delta_n_kab) if self.delta_n_kab>0 else str(self.delta_n_kab)
-        self.delta_n_kec = self.n_kec - actual_n_kec
-        self.delta_n_kec = '.' if self.delta_n_kec==0 else '+'+str(self.delta_n_kec) if self.delta_n_kec>0 else str(self.delta_n_kec)
-        self.delta_n_kel = self.n_kel - actual_n_kel
-        self.delta_n_kel = '.' if self.delta_n_kel==0 else '+'+str(self.delta_n_kel) if self.delta_n_kel>0 else str(self.delta_n_kel)
+    def get_number_location(self):
+        self.n_prov = len(self.list_provinsi)
+        self.n_kab = len(self.list_kab_kota)
+        self.n_kec = len(self.list_kecamatan)
+        self.n_kel = len(self.list_kelurahan)
+        if 'TIDAK DIKENALI' in self.list_provinsi:
+            self.n_prov -= 1
+        if 'TIDAK DIKENALI' in self.list_kab_kota:
+            self.n_kab -= 1
+        if 'TIDAK DIKENALI' in self.list_kecamatan:
+            self.n_kec -= 1
+        if 'TIDAK DIKENALI' in self.list_kecamatan:
+            self.n_kel -= 1
 
     #  get list of locations
-    def get_list_location(self, target_column):
-        self.list_provinsi = sorted(self.df_rekap_prov['prov_str'].unique().tolist())
-        self.list_kab_kota = sorted(self.df_rekap_kab['Kabupaten/Kota'].unique().tolist())
-        self.list_kecamatan = sorted(self.df_rekap_kec['Kecamatan'].unique().tolist())
-        self.list_kelurahan = sorted(self.df_rekap_kel['Kelurahan'].unique().tolist())
+    def get_list_location(self, target_column, selected_category):
+        if target_column is not None:
+            # self.list_provinsi = sorted(self.df_rekap_prov[self.df_rekap_prov[target_column]==selected_category]['prov_str'].unique().tolist())
+            self.list_provinsi = sorted(self.df_rekap_prov['prov_str'].unique().tolist())
+            self.list_kab_kota = sorted(self.df[self.df[target_column]==selected_category]['KOTA_KAB'].unique().tolist())
+            self.list_kecamatan = sorted(self.df[self.df[target_column]==selected_category]['KEC'].unique().tolist())
+            self.list_kelurahan = sorted(self.df[self.df[target_column]==selected_category]['KEL'].unique().tolist())
+        else:
+            self.list_provinsi = sorted(self.df_rekap_prov['prov_str'].unique().tolist())
+            self.list_kab_kota = sorted(self.df['KOTA_KAB'].unique().tolist())
+            self.list_kecamatan = sorted(self.df['KEC'].unique().tolist())
+            self.list_kelurahan = sorted(self.df['KEL'].unique().tolist())
 
     # get status aggregate
     def get_agg_status(self, location_filter, target_column, selected_category):
@@ -706,12 +597,11 @@ class datamart():
 # Create empty 'list_surveys' table
 create_empty_table()
 
+# Set page layout
+set_page_config()
+
 # ----------------------------------------------------------------------------------------------------------------------------
 # Load static data
-
-# Authentication config
-with open(AUTHENTICATION_YAML) as file:
-    auth_config = yaml.load(file, Loader=SafeLoader)
 
 # Load image
 image_path = os.path.join(IMG_DIR, 'Kedaikopi.png')
@@ -834,17 +724,10 @@ overflow-wrap: break-word;
 div[data-testid="metric-container"] > label[data-testid="stMetricLabel"] > div {
 overflow-wrap: break-word;
 white-space: break-spaces;
-color: #5e6ff9;
+color: red;
 }
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
-[data-testid="stMetricDelta"] svg {
-    display: none;
-}
-.element-container {
-    width: 80%;
-    max-width: 80% !important;
-}
 </style>
 """
