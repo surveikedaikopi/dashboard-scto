@@ -29,24 +29,25 @@ SCTO_PASSWORD = os.getenv('SCTO_PASSWORD')
 def update():
     # load list_surveys table
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query('SELECT * FROM list_surveys', conn)
+    list_surveys = pd.read_sql_query('SELECT * FROM list_surveys', conn)
     conn.close()
 
     # get parameters
-    for i in range(len(df)):
-        survey_name = df.loc[i,'Survey Name']
-        last_download = df.loc[i,'Last Download']
-        list_location = json.loads(df.loc[i,'List Location'])
-        wilayah = json.loads(df.loc[i,'Wilayah'])
-        targets = json.loads(df.loc[i,'Target'])
-        target_column = df.loc[i,'Target Column']
+    for i in range(len(list_surveys)):
+        survey_name = list_surveys.loc[i,'Survey Name']
+        form_id = list_surveys.loc[i,'Form ID']
+        last_download = list_surveys.loc[i,'Last Download']
+        list_location = json.loads(list_surveys.loc[i,'List Location'])
+        wilayah = json.loads(list_surveys.loc[i,'Wilayah'])
+        targets = json.loads(list_surveys.loc[i,'Target'])
+        target_column = list_surveys.loc[i,'Target Column']
         try:
-            decoder = json.loads(df.loc[i,'Decoder'])
+            decoder = json.loads(list_surveys.loc[i,'Decoder'])
         except:
             decoder = None
     
         # download data
-        df = download_data(survey_name, wilayah, decoder)
+        df = download_data(form_id, wilayah, decoder)
         
         # data preprocessing
         conn = sqlite3.connect(DB_PATH)
