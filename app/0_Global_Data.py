@@ -468,7 +468,7 @@ if st.session_state.authentication_status:
         usecols = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan', 'Target', 'Approved', 'Deficit']
         if target_column is not None:
             usecols = [target_column] + usecols
-        data = dm.df_rekap_all[usecols]
+        data = dm.df_rekap_all[usecols].sort_values(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'])
         height = 600
         # Build Table
         gb = GridOptionsBuilder.from_dataframe(data)
@@ -480,6 +480,14 @@ if st.session_state.authentication_status:
         gb.configure_grid_options(pivotMode=True)
         gridOptions = gb.build()
         ag_grid = AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True,allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True, update_mode=GridUpdateMode.VALUE_CHANGED)
+
+        # Create a download button
+        st.download_button(
+            "Download Table",
+            data=download_dataframe_as_excel(data),
+            file_name="recapitulation_pivot.xlsx",
+            mime="application/vnd.ms-excel",
+        )
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Raw Table
