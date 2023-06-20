@@ -1,6 +1,5 @@
 from module import *
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit_authenticator as stauth
 from streamlit_plotly_events import plotly_events
@@ -53,6 +52,8 @@ if st.session_state.authentication_status:
     _, list_survei, update_time, target_columns = get_survey_names()
     if len(list_survei) == 0:
         st.error('Database is empty.')
+        draw_logo()
+        authenticator.logout('Logout', 'sidebar')
         st.stop()
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -127,7 +128,6 @@ if st.session_state.authentication_status:
             selected_category = st.sidebar.selectbox('Target Category', target_categories)
         st.session_state.selected_category = selected_category
         url_params.update({'selected_category': selected_category})
-        dm.df_rekap_prov['Provinsi'] = dm.df_rekap_prov['prov_str'].apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x}</a>')
     else:
         selected_category = None
 
@@ -150,8 +150,8 @@ if st.session_state.authentication_status:
     # ----------------------------------------------------------------------------------------------------------------------------
     # Build Global Datamart
     
-    dm.get_total_number(None, target_column, selected_category)
-    dm.get_list_location(target_column)
+    dm.get_total_number(None, None, target_column, selected_category)
+    dm.get_list_location()
     dm.get_agg_status(None, target_column, selected_category)
     dm.get_number_location(target_column, selected_category)
 
@@ -179,11 +179,14 @@ if st.session_state.authentication_status:
     # Review Status: Pie Chart
 
     def status_piechart(data):
-        fig = px.pie(data, values='Count', names='Status', hole=.6, color='Status', color_discrete_map=color_map2)
+        labels, values = data['Status'], data['Count']
+        fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.6, marker=dict(colors=[color_map2[label] for label in labels]))])
         fig.update_layout(
             title='Review Status' if target_column is None else f'Review Status ({selected_category})',
-            font=dict(size=16,),
-        )
+            font={'size': 16},
+            margin={'b': 0},
+            height=350
+            )
         pie1.plotly_chart(fig, use_container_width=True)
 
     status_piechart(dm.agg_status)
@@ -192,20 +195,26 @@ if st.session_state.authentication_status:
     # Target Status: Bar Chart
 
     if target_column is not None:
-        
-        def target_piechart(data):
-            fig = px.bar(data, x='Target', y='Count', color='Status', color_discrete_map=color_map2)
+
+        def target_barchart(data):
+            labels = ['APPROVED', 'REJECTED', 'AWAITING']
+            list_data = [go.Bar(x=data[data['Status']==label]['Target'], y=data[data['Status']==label]['Count'], marker={'color':color_map2[label]}) for label in labels]
+            fig = go.Figure(data=list_data)
+
+            # Set layout properties for bar chart
             fig.update_layout(
                 barmode='group',
                 title='Status By Target Category',
-                showlegend=True,
-                font=dict(size=16),
-                xaxis={'categoryorder': 'total descending'}
+                showlegend=False,
+                font=dict(size=16),  # Set the font size to 16
+                xaxis=dict(categoryorder='total descending'),
+                margin=dict(b=0),
+                height=350
             )
             pie2.plotly_chart(fig, use_container_width=True)
 
         data = dm.df
-        target_piechart(dm.get_agg_target(data, target_column))
+        target_barchart(dm.get_agg_target(data, target_column))
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Metrics: number of locations
@@ -219,7 +228,130 @@ if st.session_state.authentication_status:
     col4.metric('Target Kelurahan', dm.n_kel, dm.delta_n_kel)
 
     # ----------------------------------------------------------------------------------------------------------------------------
+    # Target Plan (Metadata)
+
+    with st.expander('Target Plan'):
+        data = dm.metadata
+        height = get_table_height(data)
+        gb = GridOptionsBuilder.from_dataframe(data)
+        gb.configure_columns(['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'WILAYAH'], pinned='left')
+        gridOptions = gb.build()
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
+                allow_unsafe_jscode=True, height=height, update_mode=GridUpdateMode.VALUE_CHANGED)
+
+        # Create a download button
+        st.download_button(
+            "Download Table",
+            data=download_dataframe_as_excel(data),
+            file_name="target_plan.xlsx",
+            mime="application/vnd.ms-excel",
+        )
+
+    # ----------------------------------------------------------------------------------------------------------------------------
+    # Deficits
+    usecols1 = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan']
+    usecols2 = ['Target', 'Sample', 'Approved', 'Deficit']
+
+    def table_aggrid(df, region):
+        if target_column is not None:
+            title = f'Required {region} in Target Plan (Category: {selected_category})'
+        else:
+            title = f'Required {region} in Target Plan'
+        st.markdown(title)
+        height = get_table_height(df)
+        gb = GridOptionsBuilder.from_dataframe(df)
+        gridOptions = gb.build()
+        gridOptions['getRowStyle'] = jscode3
+        AgGrid(df, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True, allow_unsafe_jscode=True, height=height, update_mode=GridUpdateMode.VALUE_CHANGED)
+
+    def table_deficit_kelurahan(region, list_data_target):
+        if target_column is not None:
+            title = f'Survey Data (Kelurahan Level) (Category: {selected_category})'
+            data_survey = dm.df_rekap_all[(dm.df_rekap_all[region].isin(list_data_target)) & (dm.df_rekap_all[target_column]==selected_category)][usecols1+usecols2].sort_values(region)
+        else:
+            title = 'Survey Data (Kelurahan Level):'
+            data_survey = dm.df_rekap_all[dm.df_rekap_all[region].isin(list_data_target)][usecols1+usecols2].sort_values(region)
+        st.markdown(title)
+        data_survey['Kelurahan'] = data_survey.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
+        if region == 'Provinsi':
+            data_survey['Provinsi'] = data_survey.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Provinsi}</a>', axis=1)            
+        if region == 'Kabupaten_Kota':
+            data_survey['Kabupaten_Kota'] = data_survey.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kabupaten_Kota}</a>', axis=1)            
+        if region == 'Kecamatan':
+            data_survey['Kecamatan'] = data_survey.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kecamatan}</a>', axis=1)            
+        height = get_table_height(data_survey)
+        gb = GridOptionsBuilder.from_dataframe(data_survey)
+        cols = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan']
+        for reg, renderer in zip(cols, [cell_renderer_prov, cell_renderer_kab, cell_renderer_kec, cell_renderer_kel]):
+            gb.configure_column(reg, cellRenderer=renderer)
+        gb.configure_columns(cols, pinned='left')
+        gridOptions = gb.build()
+        gridOptions['getRowStyle'] = jscode3
+        AgGrid(data_survey, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True, allow_unsafe_jscode=True, height=height, update_mode=GridUpdateMode.VALUE_CHANGED)
+
+
+    with st.expander('Deficits'):
+        tab1, tab2, tab3, tab4 = st.tabs(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'])
+
+        # Provinsi
+        with tab1:
+            cols = ['Provinsi'] + usecols2
+            if target_column is not None:
+                data_target = dm.df_rekap_prov[(dm.df_rekap_prov['Deficit']>0) & (dm.df_rekap_prov[target_column]==selected_category)][cols]
+            else:
+                data_target = dm.df_rekap_prov[dm.df_rekap_prov['Deficit']>0][cols]
+            if len(data_target)==0:
+                st.success('Complete')
+            else:
+                list_data_target = data_target['Provinsi'].tolist()
+                table_aggrid(data_target, 'Provinsi')
+                table_deficit_kelurahan('Provinsi', list_data_target)
+
+        # Kabupaten_Kota
+        with tab2:
+            cols = ['Kabupaten_Kota'] + usecols2
+            if target_column is not None:
+                data_target = dm.df_rekap_kab[(dm.df_rekap_kab['Deficit']>0) & (dm.df_rekap_kab[target_column]==selected_category)][cols]
+            else:
+                data_target = dm.df_rekap_kab[dm.df_rekap_kab['Deficit']>0][cols]
+            if len(data_target)==0:
+                st.success('Complete')
+            else:
+                list_data_target = data_target['Kabupaten_Kota'].tolist()
+                table_aggrid(data_target, 'Kabupaten_Kota')
+                table_deficit_kelurahan('Kabupaten_Kota', list_data_target)
+
+        # Kecamatan
+        with tab3:
+            cols = ['Kecamatan'] + usecols2
+            if target_column is not None:
+                data_target = dm.df_rekap_kec[(dm.df_rekap_kec['Deficit']>0) & (dm.df_rekap_kec[target_column]==selected_category)][cols]
+            else:
+                data_target = dm.df_rekap_kec[dm.df_rekap_kec['Deficit']>0][cols]
+            if len(data_target)==0:
+                st.warning('No Data')
+            else:
+                list_data_target = data_target['Kecamatan'].tolist()
+                table_aggrid(data_target, 'Kecamatan')
+                table_deficit_kelurahan('Kecamatan', list_data_target)
+
+        # Kelurahan
+        with tab4:
+            cols = ['Kelurahan'] + usecols2
+            if target_column is not None:
+                data_target = dm.df_rekap_kel[(dm.df_rekap_kel['Deficit']>0) & (dm.df_rekap_kel[target_column]==selected_category)][cols]
+            else:
+                data_target = dm.df_rekap_kel[dm.df_rekap_kel['Deficit']>0][cols]
+            if len(data_target)==0:
+                st.warning('No Data')
+            else:
+                list_data_target = data_target['Kelurahan'].tolist()
+                table_aggrid(data_target, 'Kelurahan')
+                table_deficit_kelurahan('Kelurahan', list_data_target)
+
+    # ----------------------------------------------------------------------------------------------------------------------------
     # Distribution Map
+    st.markdown("---") 
 
     if target_column is not None:
         map_title = f'Sample Distribution Map (Category: {selected_category})'
@@ -248,7 +380,7 @@ if st.session_state.authentication_status:
         colormap = 'Viridis'
     elif selected_option == 'Deficit':
         values = dm.df_rekap_prov[filter_]['Deficit'].values
-        colormap = 'Reds'
+        colormap = 'OrRd'
 
     def draw_map(list_prov_map):
         fig = go.Figure()
@@ -272,38 +404,40 @@ if st.session_state.authentication_status:
         selected_points = plotly_events(fig)
         return selected_points
 
-    list_prov_map = dm.df_rekap_prov[filter_]['prov_str'].values
+    list_prov_map = dm.df_rekap_prov[filter_]['Provinsi'].values
     selected_points = draw_map(list_prov_map)
     if len(selected_points) != 0:
         selected_provinsi_map = list_prov_map[selected_points[0]['pointIndex']]
         # Show filtered summary table
         if target_column is not None:
-            filter_selection = (dm.df_rekap_prov['prov_str'] == selected_provinsi_map) & (dm.df_rekap_prov[target_column] == selected_category)
+            filter_selection = (dm.df_rekap_prov['Provinsi'] == selected_provinsi_map) & (dm.df_rekap_prov[target_column] == selected_category)
         else:
-            filter_selection = dm.df_rekap_prov['prov_str'] == selected_provinsi_map
+            filter_selection = dm.df_rekap_prov['Provinsi'] == selected_provinsi_map
         data = dm.df_rekap_prov[filter_selection]
-        data = data.drop(['prov_str', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent'], axis=1)
+        data = data.drop(['Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent'], axis=1)
+        data['Provinsi'] = get_link('Provinsi', data, nama_survei, selected_category)
         gb = GridOptionsBuilder.from_dataframe(data)
-        gb.configure_column('Provinsi', cellRenderer=cell_renderer)
+        gb.configure_column('Provinsi', cellRenderer=cell_renderer_prov)
         gridOptions = gb.build()
         gridOptions['getRowStyle'] = jscode2
         AgGrid(data, gridOptions=gridOptions, fit_columns_on_grid_load=False, allow_unsafe_jscode=True, height=65, update_mode=GridUpdateMode.VALUE_CHANGED)
             
     # ----------------------------------------------------------------------------------------------------------------------------
-    # Tabel Rekapitulasi Level Provinsi
+    # Recapitulation Table Level Provinsi
     st.markdown("---")
 
-    expander = st.expander('Tabel Rekapitulasi')
-    with expander:
+    with st.expander('Recapitulation Table'):
 
         if target_column is not None:
-            title = f'Tabel Rekapitulasi Level Provinsi (Category: {selected_category})'
+            title = f'Recapitulation Table at Provinsi Level (Category: {selected_category})'
         else:
-            title = 'Tabel Rekapitulasi Level Provinsi'
+            title = 'Recapitulation Table at Provinsi Level'
         st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
 
-        data = dm.df_rekap_prov[filter_].sort_values('prov_str')
-        dropcols = ['prov_str', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
+        data = dm.df_rekap_prov[filter_].sort_values('Provinsi')
+        data['Provinsi'] = get_link('Provinsi', data, nama_survei, selected_category)
+        dropcols = ['Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
+        data_download = data.drop(dropcols, axis=1)
         if target_column is not None:
             dropcols += [target_column]
         data = data.drop(dropcols, axis=1)
@@ -312,20 +446,26 @@ if st.session_state.authentication_status:
         # Build Table
         gb = GridOptionsBuilder.from_dataframe(data)
         gb.configure_default_column(min_column_width=200)
-        gb.configure_column('Provinsi', cellRenderer=cell_renderer, pinned='left')
+        gb.configure_column('Provinsi', cellRenderer=cell_renderer_prov, pinned='left')
         gridOptions = gb.build()
         gridOptions['getRowStyle'] = jscode2
-        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
-                allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True,
-                update_mode=GridUpdateMode.VALUE_CHANGED)             
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False, allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True, update_mode=GridUpdateMode.VALUE_CHANGED)             
+
+        # Create a download button
+        st.download_button(
+            "Download Table",
+            data=download_dataframe_as_excel(data_download),
+            file_name="recapitulation.xlsx",
+            mime="application/vnd.ms-excel",
+        )
+
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Pivot Table
     st.markdown("---") 
 
-    expander = st.expander('Pivot Table (Unfiltered)')
-    with expander:
-        usecols = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', 'Target', 'Approved', 'Deficit']
+    with st.expander('Pivot Table (Unfiltered)'):
+        usecols = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan', 'Target', 'Approved', 'Deficit']
         if target_column is not None:
             usecols = [target_column] + usecols
         data = dm.df_rekap_all[usecols]
@@ -333,26 +473,21 @@ if st.session_state.authentication_status:
         # Build Table
         gb = GridOptionsBuilder.from_dataframe(data)
         gb.configure_column( field=target_column, pivot=True)
-        for f in ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan']:
+        for f in ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan']:
             gb.configure_column(field=f, rowGroup=True)
         for f in ['Target', 'Approved', 'Deficit']:
             gb.configure_column(field=f, type=["numericColumn"], aggFunc="sum")
         gb.configure_grid_options(pivotMode=True)
         gridOptions = gb.build()
-        ag_grid = AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True,
-                allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True,
-                update_mode=GridUpdateMode.VALUE_CHANGED)
+        ag_grid = AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True,allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True, update_mode=GridUpdateMode.VALUE_CHANGED)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Raw Table
     st.markdown("---")
 
-    expander = st.expander('Raw Table (Unfiltered)')
-    with expander:
-
+    with st.expander('Raw Table (Unfiltered)'):
         data = dm.df
         height = get_table_height(data)
-
         gb = GridOptionsBuilder.from_dataframe(data)
         gb.configure_column('Link', cellRenderer=cell_link, pinned='right')
         gridOptions = gb.build()
@@ -361,32 +496,66 @@ if st.session_state.authentication_status:
         AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
                 allow_unsafe_jscode=True, height=height, 
                 update_mode=GridUpdateMode.VALUE_CHANGED)
+        
+        # Create a download button
+        st.download_button(
+            "Download Table",
+            data=download_dataframe_as_excel(data.drop(['Link'], axis=1)),
+            file_name="raw_data.xlsx",
+            mime="application/vnd.ms-excel",
+        )
 
     # ----------------------------------------------------------------------------------------------------------------------------
-    # Duplicates By Respondent
+    # Data Anomalies
     st.markdown("---")
 
-    expander = st.expander('Duplicates By Respondent (Unfiltered)')
-    with expander:
+    with st.expander('Data Anomalies'):
+        tab1, tab2, tab3 = st.tabs(['Duplicates By Repondents', 'Duplicates By Kelurahan', 'Zero Target'])
 
-        data = dm.df[dm.df[['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'NAMA_KK', 'NAMA_RESPONDEN']].duplicated(keep=False)].sort_values('NAMA_RESPONDEN')
-        height = get_table_height(data)
+        # Duplicates By Repondents
+        with tab1:
+            data = dm.df[dm.df[['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'NAMA_KK', 'NAMA_RESPONDEN']].duplicated(keep=False)].sort_values('NAMA_RESPONDEN')
+            height = get_table_height(data)
+            gb = GridOptionsBuilder.from_dataframe(data)
+            gb.configure_column('Link', cellRenderer=cell_link, pinned='right')
+            gridOptions = gb.build()
+            gridOptions['getRowStyle'] = jscode1
+            AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
+                    allow_unsafe_jscode=True, height=height, 
+                    update_mode=GridUpdateMode.VALUE_CHANGED)
 
-        gb = GridOptionsBuilder.from_dataframe(data)
-        gb.configure_column('Link', cellRenderer=cell_link, pinned='right')
-        gridOptions = gb.build()
-        gridOptions['getRowStyle'] = jscode1
+        # Duplicates By Kelurahan
+        with tab2:
+            usecols = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan', 'Target', 'Sample', 'Approved']
+            data = dm.df_rekap_all[dm.df_rekap_all['Kelurahan'].duplicated(keep=False)][usecols].sort_values('Kelurahan')
+            data['Kelurahan'] = data.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
+            height = get_table_height(data)
+            gb = GridOptionsBuilder.from_dataframe(data)
+            gb.configure_column('Kelurahan', cellRenderer=cell_renderer_kel)
+            gb.configure_columns(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'], pinned='left')
+            gridOptions = gb.build()
+            AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
+                    allow_unsafe_jscode=True, height=height, 
+                    update_mode=GridUpdateMode.VALUE_CHANGED)
 
-        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
-                allow_unsafe_jscode=True, height=height, 
-                update_mode=GridUpdateMode.VALUE_CHANGED)
+        # Zero Target
+        with tab3:
+            data = dm.df_rekap_all[dm.df_rekap_all['Target']==0][usecols].sort_values('Kelurahan')
+            data['Kelurahan'] = data.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
+            height = get_table_height(data)
+            gb = GridOptionsBuilder.from_dataframe(data)
+            gb.configure_column('Kelurahan', cellRenderer=cell_renderer_kel)
+            gb.configure_columns(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'], pinned='left')
+            gridOptions = gb.build()
+            AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
+                    allow_unsafe_jscode=True, height=height, 
+                    update_mode=GridUpdateMode.VALUE_CHANGED)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Rejected Enumerators
     st.markdown("---")
 
-    expander = st.expander('Rejected Enumerators (Unfiltered)')
-    with expander:
+    with st.expander('Rejected Enumerators (Unfiltered)'):
 
         cols = ['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'NAMA_ENUM', 'review_status']
         data = dm.df.groupby(cols).size().reset_index().sort_values([0, 'NAMA_ENUM'], ascending=False)

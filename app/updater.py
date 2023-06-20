@@ -37,7 +37,6 @@ def update():
         survey_name = list_surveys.loc[i,'Survey Name']
         form_id = list_surveys.loc[i,'Form ID']
         last_download = list_surveys.loc[i,'Last Download']
-        list_location = json.loads(list_surveys.loc[i,'List Location'])
         wilayah = json.loads(list_surveys.loc[i,'Wilayah'])
         targets = json.loads(list_surveys.loc[i,'Target'])
         target_column = list_surveys.loc[i,'Target Column']
@@ -53,7 +52,7 @@ def update():
         conn = sqlite3.connect(DB_PATH)
         metadata = pd.read_sql_query(f'SELECT * FROM {survey_name}_metadata', conn)
         conn.close()
-        generate_datalake(survey_name, df, list_location, targets, target_column, metadata)
+        generate_datalake(survey_name, df, targets, target_column, metadata)
         
         # update last_download in list_surveys table
         conn = sqlite3.connect(DB_PATH)
@@ -78,10 +77,10 @@ schedule.every().hour.do(update)
 for i in range(6,22):
     if i < 10:
         schedule.every().day.at(f"0{i}:00").do(update)
-        schedule.every().day.at(f"0{i}:30").do(update)
+        # schedule.every().day.at(f"0{i}:30").do(update)
     else:
         schedule.every().day.at(f"{i}:00").do(update)
-        schedule.every().day.at(f"{i}:30").do(update)
+        # schedule.every().day.at(f"{i}:30").do(update)
 
 # Run the scheduler continuously
 while True:

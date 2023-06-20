@@ -148,9 +148,10 @@ def download_data(form_id, wilayah, decoder):
             df.loc[:,f] = df[f].map(decoder[f])
             df[f] = df[f].fillna('TIDAK DIKENALI')
             df[f] = df[f].str.upper()
-    # apply uppercase and remove whitespace at the end of the string
+    # apply uppercase and remove whitespace at the beginning and at the end of the strings
     for col in ['NAMA_RESPONDEN', 'NAMA_KK', 'NAMA_ENUM', 'PROV', 'KOTA_KAB', 'KEC', 'KEC_LAINNYA', 'KEL', 'KEL_LAINNYA']:
-        df.loc[:,col] = df[col].str.upper().str.rstrip()
+        df.loc[:,col] = df[col].str.upper().str.strip()
+        df.loc[:,col] = df[col].str.rstrip()
     # fix "LAINNYA" in KEC & KEL
     for f in ['KEC', 'KEL']:
         df[f] = df.apply(lambda x : x[f'{f}_LAINNYA'] if x[f] == 'TIDAK DIKENALI' else x[f], axis=1)
@@ -161,151 +162,124 @@ def download_data(form_id, wilayah, decoder):
     df['Link'] = df['Link'].apply(lambda x : f'<a href="https://{SERVER_NAME}.surveycto.com/view/submission.html?uuid=uuid%3A{x}" target="_blank">link</a>')
     return df.drop(['KEC_LAINNYA', 'KEL_LAINNYA', 'KEY'], axis=1)
 
-
-# generate datalake
-def generate_datalake(survey_name, df, list_location, targets, target_column, metadata):
-
-    # -------------------------------------------------------------------------------------------------
-    # tabel rekapitulasi
-
-    # temporary data (1)
-    cols = ['PROV', 'KOTA_KAB', 'KEC', 'KEL']
+# build recapitulation table
+def get_recap(df, target_column, targets, region, metadata, all_regions=False):
+    reg = {'Provinsi': 'PROV', 'Kabupaten_Kota': 'KOTA_KAB', 'Kecamatan': 'KEC', 'Kelurahan': 'KEL'}
+    # generate location ids
     if target_column is not None:
-        cols += [target_column]
-    tmp1 = df.groupby(cols).size().reset_index()
-    if target_column is not None:
-        tmp1['loc_id'] = tmp1.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}_{x[target_column]}', axis=1)
+        if region == 'Provinsi':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x[target_column]}', axis=1)
+        elif region == 'Kabupaten_Kota':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x[target_column]}', axis=1)
+        elif region == 'Kecamatan':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x[target_column]}', axis=1)
+        elif region == 'Kelurahan':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}_{x[target_column]}', axis=1)
     else:
-        tmp1['loc_id'] = tmp1.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}', axis=1)
-    # temporary data (2)
-    tmp2 = df[df['review_status']=='APPROVED'].fillna(0).groupby(cols).size().reset_index()
-    # temporary data (3)
-    tmp3 = df[df['review_status']=='REJECTED'].fillna(0).groupby(cols).size().reset_index()
-    # merge
-    if len(tmp2) == 0:
-        rekap = tmp1
-        rekap['Approved'] = 0
-    else:
-        if target_column is not None:
-            tmp2['loc_id'] = tmp2.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}_{x[target_column]}', axis=1)
-        else:
-            tmp2['loc_id'] = tmp2.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}', axis=1)
-        rekap = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id')
-    if len(tmp3) == 0:
-        rekap['Rejected'] = 0
-    else:
-        if target_column is not None:
-            tmp3['loc_id'] = tmp3.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}_{x[target_column]}', axis=1)
-        else:
-            tmp3['loc_id'] = tmp3.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}', axis=1)
-        rekap = pd.merge(rekap, tmp3[['loc_id', 0]], how='left', on='loc_id')
-    rekap = rekap.drop(['loc_id'], axis=1)
-    rekap = rekap.fillna(0)
-    # rename columns
-    if target_column is not None:
-        cols = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', target_column, 'Sample', 'Approved', 'Rejected']
-    else:
-        cols = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', 'Sample', 'Approved', 'Rejected']
-    rekap.columns = cols
-    # add empty samples
-    if target_column is not None:
-        tmp = metadata.melt(id_vars=['PROV', 'KOTA_KAB', 'KEC', 'KEL'], value_vars=targets.keys())
-        for cat in targets.keys():
-            list_exist = rekap[rekap[target_column]==cat]['Kelurahan'].unique().tolist() 
-            for kel in [i for i in list_location[cat]['KEL'] if i not in list_exist]:
-                select = (tmp['KEL']==kel) & (tmp['variable']==cat)
-                prov = tmp[select]['PROV'].values[0]
-                kab = tmp[select]['KOTA_KAB'].values[0]
-                kec = tmp[select]['KEC'].values[0]
-                vals = {'Provinsi': prov, 'Kabupaten/Kota': kab, 'Kecamatan': kec, 'Kelurahan': kel, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['PROV'][prov]}
-                rekap = rekap.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap['Kelurahan'].unique().tolist() 
-        for kel in [i for i in list_location['KEL'] if i not in list_exist]:
-            select = metadata['KEL']==kel
-            prov = metadata[select]['PROV'].values[0]
-            kab = metadata[select]['KOTA_KAB'].values[0]
-            kec = metadata[select]['KEC'].values[0]
-            vals = {'Provinsi': prov, 'Kabupaten/Kota': kab, 'Kecamatan': kec, 'Kelurahan': kel, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['PROV'][prov]}
-            rekap = rekap.append(vals, ignore_index=True)
-    # add more features
-    rekap['Awaiting'] = rekap['Sample'] - rekap['Approved'] - rekap['Rejected']
+        if region == 'Provinsi':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}', axis=1)
+        elif region == 'Kabupaten_Kota':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}', axis=1)
+        elif region == 'Kecamatan':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}', axis=1)
+        elif region == 'Kelurahan':
+            df['loc_id'] = df.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}', axis=1)
+    # grouping
+    tmp1 = df.groupby('loc_id').size().reset_index()
+    tmp2 = df[df['review_status']=='APPROVED'].groupby('loc_id').size().reset_index()
+    tmp3 = df[df['review_status']=='REJECTED'].groupby('loc_id').size().reset_index()
+    # merging
+    tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
+    recap = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
+    recap.columns = [region, 'Sample', 'Approved', 'Rejected']
     # set target
     if target_column is not None:
-        rekap['Target'] = 0
+        recap[target_column] = recap[region].apply(lambda x : x.split('_')[-1])
+        # set target
+        recap['Target'] = 0
         for cat in targets.keys():
-            idx = rekap[rekap[target_column]==cat].index
-            rekap.loc[idx,'Target'] = rekap.loc[idx,'Kelurahan'].map(targets[cat]['KEL']).values
+            idx = recap[recap[target_column]==cat].index
+            recap.loc[idx,'Target'] = recap.loc[idx,region].map(targets[cat][reg[region]]).values
+        newcols = [region, target_column, 'Target', 'Sample', 'Approved', 'Rejected']
     else:
-        rekap['Target'] = rekap['Kelurahan'].map(targets['KEL'])
-        rekap['Target'] = rekap['Target'].fillna(0).astype(int)
-    # deficit
-    rekap['Deficit'] = rekap['Target'] - rekap['Approved']
-    rekap['Deficit'] = np.where(rekap['Deficit']<0, 0, rekap['Deficit'])
+        recap['Target'] = recap[region].map(targets[reg[region]]).values
+        newcols = [region, 'Target', 'Sample', 'Approved', 'Rejected'] 
+    recap = recap[newcols]
+    # add empty samples
+    row_indices = recap.index
+    idx = {'Provinsi': 0, 'Kabupaten_Kota': 1, 'Kecamatan': 2, 'Kelurahan': 3}
+    if target_column is not None:
+        tmp = metadata.melt(id_vars=['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'WILAYAH'], value_vars=[i for i in metadata.columns if i not in ['PROV', 'KOTA_KAB', 'KEC', 'KEL', 'WILAYAH']])
+        ori = tmp.copy()
+        tmp['PROV'] = ori.apply(lambda x : f'{x.PROV}_{x.variable}', axis=1)
+        tmp['KOTA_KAB'] = ori.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.variable}', axis=1)
+        tmp['KEC'] = ori.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.variable}', axis=1)
+        tmp['KEL'] = ori.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}_{x.variable}', axis=1)
+        for cat in targets.keys():
+            list_exist = recap[recap[target_column]==cat][region].unique().tolist() 
+            for ireg in [i for i in tmp[tmp['variable']==cat][reg[region]].unique() if i not in list_exist]:
+                if all_regions:
+                    kel = ireg.split('_')[3]
+                    kec = ireg.split('_')[2]
+                    kab = ireg.split('_')[1]
+                    prov = ireg.split('_')[0]
+                    vals = {'Provinsi': prov, 'Kabupaten_Kota': kab, 'Kecamatan': kec, 'Kelurahan': kel, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KEL'][ireg]}
+                else:
+                    vals = {region: ireg.split('_')[idx[region]], target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat][reg[region]][ireg]}
+                recap = recap.append(vals, ignore_index=True)
+    else:
+        metadata['PROV'] = metadata.apply(lambda x : f'{x.PROV}', axis=1)
+        metadata['KOTA_KAB'] = metadata.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}', axis=1)
+        metadata['KEC'] = metadata.apply(lambda x : f'{x.KOTA_KAB}_{x.KEC}', axis=1)
+        metadata['KEL'] = metadata.apply(lambda x : f'{x.KEC}_{x.KEL}', axis=1)  
+        list_exist = recap[region].unique().tolist() 
+        for ireg in [i for i in metadata[reg[region]].unique() if i not in list_exist]:
+            if all_regions:
+                kel = ireg.split('_')[3]
+                kec = ireg.split('_')[2]
+                kab = ireg.split('_')[1]
+                prov = ireg.split('_')[0]
+                vals = {'Provinsi': prov, 'Kabupaten_Kota': kab, 'Kecamatan': kec, 'Kelurahan': kel, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEL'][ireg]}
+            else:
+                vals = {region: ireg.split('_')[idx[region]], 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[reg[region]][ireg]}
+            recap = recap.append(vals, ignore_index=True)
+    # restoration
+    if all_regions:
+        for ireg in idx.keys():
+            recap.loc[row_indices, ireg] = recap.loc[row_indices, 'Kelurahan'].apply(lambda x : x.split('_')[idx[ireg]])
+    else:
+        recap.loc[row_indices, region] = recap.loc[row_indices, region].apply(lambda x : x.split('_')[idx[region]])            
+    # add more features
+    recap['Awaiting'] = recap['Sample'] - recap['Approved'] - recap['Rejected']   
+    recap['Deficit'] = recap['Target'] - recap['Approved']
+    recap['Deficit'] = np.where(recap['Deficit']<0, 0, recap['Deficit'])
     cols = ['Sample', 'Approved', 'Rejected', 'Awaiting', 'Target', 'Deficit']
-    rekap[cols] = rekap[cols].fillna(0).astype(int)
+    recap[cols] = recap[cols].fillna(0).astype(int)
+    return recap.sort_values(region)
+
+
+
+# generate datalake
+def generate_datalake(survey_name, df, targets, target_column, metadata):
+
+    # -------------------------------------------------------------------------------------------------
+    
+    # tabel rekapitulasi (All, down to Kelurahan)
+    rekap = get_recap(df, target_column, targets, 'Kelurahan', metadata.copy(), all_regions=True)
+    
     # reorder columns
     if target_column is not None:
-        new_column_order = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
+        new_column_order = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan', target_column, 'Target', 'Sample', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
     else:
-        new_column_order = ['Provinsi', 'Kabupaten/Kota', 'Kecamatan', 'Kelurahan', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
+        new_column_order = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan', 'Target', 'Sample', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
     rekap = rekap[new_column_order]
 
     # -------------------------------------------------------------------------------------------------
-    # table rekapitulasi up to province level
     
-    if target_column is not None:
-        tmp1 = df.groupby(['PROV', target_column]).size().reset_index()
-        tmp1['loc_id'] = tmp1.apply(lambda x : f'{x.PROV}_{x[target_column]}', axis=1)
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['PROV', target_column]).size().reset_index()
-        tmp2['loc_id'] = tmp2.apply(lambda x : f'{x.PROV}_{x[target_column]}', axis=1)
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['PROV', target_column]).size().reset_index()
-        tmp3['loc_id'] = tmp3.apply(lambda x : f'{x.PROV}_{x[target_column]}', axis=1)
-        # merge
-        tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_prov = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_prov.columns = ['Provinsi', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_prov['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_prov[rekap_prov[target_column]==cat].index
-            rekap_prov.loc[idx,'Target'] = rekap_prov.loc[idx,'Provinsi'].map(targets[cat]['PROV']).values
-        # clean up
-        rekap_prov.drop(['loc_id'], axis=1)
-    else:
-        tmp1 = df.groupby(['PROV']).size().reset_index()
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['PROV']).size().reset_index()
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['PROV']).size().reset_index()
-        # merge
-        tmp = pd.merge(tmp1, tmp2, how='left', on='PROV').fillna(0)
-        rekap_prov = pd.merge(tmp, tmp3, how='left', on='PROV').fillna(0)
-        rekap_prov.columns = ['Provinsi', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_prov['Target'] = rekap_prov['Provinsi'].map(targets['PROV'])
-        rekap_prov['Target'] = rekap_prov['Target'].fillna(0).astype(int)
-    # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_prov[rekap_prov[target_column]==cat]['Provinsi'].unique().tolist() 
-            for prov in [i for i in list_location[cat]['PROV'] if i not in list_exist]:
-                vals = {'Provinsi': prov, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['PROV'][prov]}
-                rekap_prov = rekap_prov.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_prov['Provinsi'].unique().tolist() 
-        for prov in [i for i in list_location['PROV'] if i not in list_exist]:
-            vals = {'Provinsi': prov, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['PROV'][prov]}
-            rekap_prov = rekap_prov.append(vals, ignore_index=True)
-    # add more features
-    rekap_prov['Awaiting'] = rekap_prov['Sample'] - rekap_prov['Approved'] - rekap_prov['Rejected']   
-    rekap_prov['Deficit'] = rekap_prov['Target'] - rekap_prov['Approved']
-    rekap_prov['Deficit'] = np.where(rekap_prov['Deficit']<0, 0, rekap_prov['Deficit'])
-    cols = ['Sample', 'Approved', 'Rejected', 'Awaiting', 'Target', 'Deficit']
-    rekap_prov[cols] = rekap_prov[cols].fillna(0).astype(int)
-    rekap_prov = rekap_prov.sort_values('Provinsi')
-    rekap_prov['prov_str'] = rekap_prov['Provinsi']
-    rekap_prov['Provinsi'] = rekap_prov['Provinsi'].\
-    apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x}&nama_survei={survey_name}" target="_blank">{x}</a>')
-    rekap_prov['Provinsi'] = rekap_prov.apply(lambda x : x.prov_str if x.prov_str == 'TIDAK DIKENALI' else x.Provinsi, axis=1)
+    # table rekapitulasi up to provinsi level
+    rekap_prov = get_recap(df, target_column, targets, 'Provinsi', metadata.copy())
+
+    # get percentages
     rekap_prov['Approved_percent'] = rekap_prov['Approved'] / rekap_prov['Sample'] * 100
     rekap_prov['Rejected_percent'] = rekap_prov['Rejected'] / rekap_prov['Sample'] * 100
     rekap_prov['Awaiting_percent'] = rekap_prov['Awaiting'] / rekap_prov['Sample'] * 100
@@ -313,191 +287,34 @@ def generate_datalake(survey_name, df, list_location, targets, target_column, me
     cols = ['Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
     rekap_prov[cols] = rekap_prov[cols].fillna(0)
     rekap_prov[cols] = rekap_prov[cols].round(1)
+
     # reorder columns
     if target_column is not None:
-        new_column_order = ['Provinsi', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent', 'prov_str']
+        new_column_order = ['Provinsi', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
     else:
-        new_column_order = ['Provinsi', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent', 'prov_str']
+        new_column_order = ['Provinsi', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting', 'Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
     rekap_prov = rekap_prov[new_column_order]
 
     # -------------------------------------------------------------------------------------------------
+    
     # table rekapitulasi up to kabupaten level
-
-    if target_column is not None:
-        tmp1 = df.groupby(['KOTA_KAB', target_column]).size().reset_index()
-        tmp1['loc_id'] = tmp1.apply(lambda x : f'{x.KOTA_KAB}_{x[target_column]}', axis=1)
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['KOTA_KAB', target_column]).size().reset_index()
-        tmp2['loc_id'] = tmp2.apply(lambda x : f'{x.KOTA_KAB}_{x[target_column]}', axis=1)
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['KOTA_KAB', target_column]).size().reset_index()
-        tmp3['loc_id'] = tmp3.apply(lambda x : f'{x.KOTA_KAB}_{x[target_column]}', axis=1)
-        # merge
-        tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_kab = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_kab.columns = ['Kabupaten/Kota', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_kab['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_kab[rekap_kab[target_column]==cat].index
-            rekap_kab.loc[idx,'Target'] = rekap_kab.loc[idx,'Kabupaten/Kota'].map(targets[cat]['KOTA_KAB']).values
-        # clean up
-        rekap_kab.drop(['loc_id'], axis=1)
-    else:
-        tmp1 = df.groupby(['KOTA_KAB']).size().reset_index()
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['KOTA_KAB']).size().reset_index()
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['KOTA_KAB']).size().reset_index()
-        # merge
-        tmp = pd.merge(tmp1, tmp2, how='left', on='KOTA_KAB').fillna(0)
-        rekap_kab = pd.merge(tmp, tmp3, how='left', on='KOTA_KAB').fillna(0)
-        rekap_kab.columns = ['Kabupaten/Kota', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_kab['Target'] = rekap_kab['Kabupaten/Kota'].map(targets['KOTA_KAB'])
-        rekap_kab['Target'] = rekap_kab['Target'].fillna(0).astype(int)
-    # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_kab[rekap_kab[target_column]==cat]['Kabupaten/Kota'].unique().tolist()
-            for kab in [i for i in list_location[cat]['KOTA_KAB'] if i not in list_exist]:
-                vals = {'Kabupaten/Kota': kab, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KOTA_KAB'][kab]}
-                rekap_kab = rekap_kab.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_kab['Kabupaten/Kota'].unique().tolist()
-        for kab in [i for i in list_location['KOTA_KAB'] if i not in list_exist]:
-            vals = {'Kabupaten/Kota': kab, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KOTA_KAB'][kab]}
-            rekap_kab = rekap_kab.append(vals, ignore_index=True)
-    # add more features
-    rekap_kab['Awaiting'] = rekap_kab['Sample'] - rekap_kab['Approved'] - rekap_kab['Rejected']   
-    rekap_kab['Deficit'] = rekap_kab['Target'] - rekap_kab['Approved']
-    rekap_kab['Deficit'] = np.where(rekap_kab['Deficit']<0, 0, rekap_kab['Deficit'])
-    cols = ['Sample', 'Approved', 'Rejected', 'Awaiting', 'Target', 'Deficit']
-    rekap_kab[cols] = rekap_kab[cols].fillna(0).astype(int)
-    rekap_kab = rekap_kab.sort_values('Kabupaten/Kota')
-    # reorder columns
-    if target_column is not None:
-        new_column_order = ['Kabupaten/Kota', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
-    else:
-        new_column_order = ['Kabupaten/Kota', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
-    rekap_kab = rekap_kab[new_column_order]
+    rekap_kab = get_recap(df, target_column, targets, 'Kabupaten_Kota', metadata.copy())
 
     # -------------------------------------------------------------------------------------------------
+    
     # table rekapitulasi up to kecamatan level
-
-    if target_column is not None:
-        tmp1 = df.groupby(['KEC', target_column]).size().reset_index()
-        tmp1['loc_id'] = tmp1.apply(lambda x : f'{x.KEC}_{x[target_column]}', axis=1)
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['KEC', target_column]).size().reset_index()
-        tmp2['loc_id'] = tmp2.apply(lambda x : f'{x.KEC}_{x[target_column]}', axis=1)
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['KEC', target_column]).size().reset_index()
-        tmp3['loc_id'] = tmp3.apply(lambda x : f'{x.KEC}_{x[target_column]}', axis=1)
-        # merge
-        tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_kec = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_kec.columns = ['Kecamatan', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_kec['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_kec[rekap_kec[target_column]==cat].index
-            rekap_kec.loc[idx,'Target'] = rekap_kec.loc[idx,'Kecamatan'].map(targets[cat]['KEC']).values
-        # clean up
-        rekap_kec.drop(['loc_id'], axis=1)
-    else:
-        tmp1 = df.groupby(['KEC']).size().reset_index()
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['KEC']).size().reset_index()
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['KEC']).size().reset_index()
-        # merge
-        tmp = pd.merge(tmp1, tmp2, how='left', on='KEC').fillna(0)
-        rekap_kec = pd.merge(tmp, tmp3, how='left', on='KEC').fillna(0)
-        rekap_kec.columns = ['Kecamatan', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_kec['Target'] = rekap_kec['Kecamatan'].map(targets['KEC'])
-        rekap_kec['Target'] = rekap_kec['Target'].fillna(0).astype(int)
-    # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_kec[rekap_kec[target_column]==cat]['Kecamatan'].unique().tolist()
-            for kec in [i for i in list_location[cat]['KEC'] if i not in list_exist]:
-                vals = {'Kecamatan': kec, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KEC'][kec]}
-                rekap_kec = rekap_kec.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_kec['Kecamatan'].unique().tolist()
-        for kec in [i for i in list_location['KEC'] if i not in list_exist]:
-            vals = {'Kecamatan': kec, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEC'][kec]}
-            rekap_kec = rekap_kec.append(vals, ignore_index=True)
-    # add more features
-    rekap_kec['Awaiting'] = rekap_kec['Sample'] - rekap_kec['Approved'] - rekap_kec['Rejected']   
-    rekap_kec['Deficit'] = rekap_kec['Target'] - rekap_kec['Approved']
-    rekap_kec['Deficit'] = np.where(rekap_kec['Deficit']<0, 0, rekap_kec['Deficit'])
-    cols = ['Sample', 'Approved', 'Rejected', 'Awaiting', 'Target', 'Deficit']
-    rekap_kec[cols] = rekap_kec[cols].fillna(0).astype(int)
-    rekap_kec = rekap_kec.sort_values('Kecamatan')
-    # reorder columns
-    if target_column is not None:
-        new_column_order = ['Kecamatan', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
-    else:
-        new_column_order = ['Kecamatan', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
-    rekap_kec = rekap_kec[new_column_order]
+    rekap_kec = get_recap(df, target_column, targets, 'Kecamatan', metadata.copy())
 
     # -------------------------------------------------------------------------------------------------
+    
     # table rekapitulasi up to kelurahan level
-
-    if target_column is not None:
-        tmp1 = df.groupby(['KEL', target_column]).size().reset_index()
-        tmp1['loc_id'] = tmp1.apply(lambda x : f'{x.KEL}_{x[target_column]}', axis=1)
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['KEL', target_column]).size().reset_index()
-        tmp2['loc_id'] = tmp2.apply(lambda x : f'{x.KEL}_{x[target_column]}', axis=1)
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['KEL', target_column]).size().reset_index()
-        tmp3['loc_id'] = tmp3.apply(lambda x : f'{x.KEL}_{x[target_column]}', axis=1)
-        # merge
-        tmp = pd.merge(tmp1, tmp2[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_kel = pd.merge(tmp, tmp3[['loc_id', 0]], how='left', on='loc_id').fillna(0)
-        rekap_kel.columns = ['Kelurahan', target_column, 'Sample', 'loc_id', 'Approved', 'Rejected']
-        # set target
-        rekap_kel['Target'] = 0
-        for cat in targets.keys():
-            idx = rekap_kel[rekap_kel[target_column]==cat].index
-            rekap_kel.loc[idx,'Target'] = rekap_kel.loc[idx,'Kelurahan'].map(targets[cat]['KEL']).values
-        # clean up
-        rekap_kel.drop(['loc_id'], axis=1)
-    else:
-        tmp1 = df.groupby(['KEL']).size().reset_index()
-        tmp2 = df[df['review_status']=='APPROVED'].groupby(['KEL']).size().reset_index()
-        tmp3 = df[df['review_status']=='REJECTED'].groupby(['KEL']).size().reset_index()
-        # merge
-        tmp = pd.merge(tmp1, tmp2, how='left', on='KEL').fillna(0)
-        rekap_kel = pd.merge(tmp, tmp3, how='left', on='KEL').fillna(0)
-        rekap_kel.columns = ['Kelurahan', 'Sample', 'Approved', 'Rejected']
-        # set target
-        rekap_kel['Target'] = rekap_kel['Kelurahan'].map(targets['KEL'])
-        rekap_kel['Target'] = rekap_kel['Target'].fillna(0).astype(int)
-    # add empty samples
-    if target_column is not None:
-        for cat in targets.keys():
-            list_exist = rekap_kel[rekap_kel[target_column]==cat]['Kelurahan'].unique().tolist()
-            for kel in [i for i in list_location[cat]['KEL'] if i not in list_exist]:
-                vals = {'Kelurahan': kel, target_column: cat, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets[cat]['KEL'][kel]}
-                rekap_kel = rekap_kel.append(vals, ignore_index=True)
-    else:
-        list_exist = rekap_kel['Kelurahan'].unique().tolist()
-        for kel in [i for i in list_location['KEL'] if i not in list_exist]:
-            vals = {'Kelurahan': kel, 'Sample': 0, 'Approved': 0, 'Rejected': 0, 'Target': targets['KEL'][kel]}
-            rekap_kel = rekap_kel.append(vals, ignore_index=True)
-    # add more features
-    rekap_kel['Awaiting'] = rekap_kel['Sample'] - rekap_kel['Approved'] - rekap_kel['Rejected']   
-    rekap_kel['Deficit'] = rekap_kel['Target'] - rekap_kel['Approved']
-    rekap_kel['Deficit'] = np.where(rekap_kel['Deficit']<0, 0, rekap_kel['Deficit'])
-    cols = ['Sample', 'Approved', 'Rejected', 'Awaiting', 'Target', 'Deficit']
-    rekap_kel[cols] = rekap_kel[cols].fillna(0).astype(int)
-    rekap_kel = rekap_kel.sort_values('Kelurahan')
-    # reorder columns
-    if target_column is not None:
-        new_column_order = ['Kelurahan', target_column, 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
-    else:
-        new_column_order = ['Kelurahan', 'Sample', 'Target', 'Approved', 'Deficit', 'Rejected', 'Awaiting']
-    rekap_kel = rekap_kel[new_column_order]
+    rekap_kel = get_recap(df, target_column, targets, 'Kelurahan', metadata.copy())
 
     # -------------------------------------------------------------------------------------------------
+    
     # save to DB
     conn = sqlite3.connect(DB_PATH)
-    df.to_sql(survey_name, conn, if_exists='replace', index=False)
+    df.drop(['loc_id'], axis=1).to_sql(survey_name, conn, if_exists='replace', index=False)
     metadata.to_sql(f'{survey_name}_metadata', conn, if_exists='replace', index=False)
     rekap.to_sql(f'{survey_name}_rekap_all', conn, if_exists='replace', index=False)
     rekap_prov.to_sql(f'{survey_name}_rekap_prov', conn, if_exists='replace', index=False)
@@ -534,13 +351,25 @@ def generate_datamart(nama_survei):
 @st.cache_data
 def get_provinsi_geojson(json_path=os.path.join(JSON_DIR, 'provinsi2022.geojson')):
     gdf = gpd.read_file(json_path)
-    gdf.set_index('prov_str', inplace=True)
+    gdf.set_index('Provinsi', inplace=True)
     return  gdf.__geo_interface__
 
 @st.cache_data
 def title_h1(nama_survei):
     title = f"Rekapitulasi Data QC <span style='color:  #aeb6bf'>{nama_survei}</span>" 
     st.markdown(f"<h1 style='text-align: center; color: black; font-size:32px;'>{title}</h1>", unsafe_allow_html=True)
+
+# construct links
+def get_link(region, df, nama_survei, selected_category):
+    if region == 'Provinsi':
+        links = df.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Provinsi}</a>' if x[region]!='TIDAK DIKENALI' else x[region], axis=1)
+    elif region == 'Kabupaten_Kota':
+        links = df.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kabupaten={x.Kabupaten_Kota}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kabupaten_Kota}</a>' if x[region]!='TIDAK DIKENALI' else x[region], axis=1)
+    elif region == 'Kecamatan':
+        links = df.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kabupaten={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kecamatan}</a>' if x[region]!='TIDAK DIKENALI' else x[region], axis=1)
+    elif region == 'Kelurahan':
+        links = df.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kabupaten={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>' if x[region]!='TIDAK DIKENALI' else x[region], axis=1)
+    return links
 
 # download dataframe
 def download_dataframe_as_excel(df):
@@ -584,6 +413,7 @@ class datamart():
         self.list_surveys = self.load_table('list_surveys')
         self.list_surveys = self.list_surveys[self.list_surveys['Survey Name']==self.nama_survei]
         self.df = self.load_table(self.nama_survei)
+        self.metadata = self.load_table(table=f'{self.nama_survei}_metadata')
         self.df_rekap_all = self.load_table(table=f'{self.nama_survei}_rekap_all')
         self.df_rekap_prov = self.load_table(table=f'{self.nama_survei}_rekap_prov')
         self.df_rekap_kab = self.load_table(table=f'{self.nama_survei}_rekap_kab')
@@ -591,36 +421,32 @@ class datamart():
         self.df_rekap_kel = self.load_table(table=f'{self.nama_survei}_rekap_kel')
 
     # get total numbers of people
-    def get_total_number(self, location_filter, target_column, selected_category):
-        dd = json.loads(self.list_surveys['Target'].values[0])
+    def get_total_number(self, location_filter, metadata_filter, target_column, selected_category):
         if location_filter is not None:
             if target_column is not None:
                 filter_ = (self.df[target_column]==selected_category) & location_filter
-                loc = [(col,self.df[filter_][col].unique()[0]) for col in ['PROV', 'KOTA_KAB', 'KEC', 'KEL'] if self.df[filter_][col].nunique() == 1]
-                try:
-                    self.n_target = dd[selected_category][loc[-1][0]][loc[-1][1]]
-                    approved = len(self.df[(self.df['review_status']=='APPROVED')&(self.df[target_column]==selected_category)&filter_])
-                except:
-                    self.n_target = 0
-                    approved = 0
+                approved = len(self.df[(self.df['review_status']=='APPROVED') & (self.df[target_column]==selected_category) & filter_])
             else:
-                filter_ = pd.Series([True] * len(self.df)) & location_filter
-                loc = [(col,self.df[filter_][col].unique()[0]) for col in ['PROV', 'KOTA_KAB', 'KEC', 'KEL'] if self.df[filter_][col].nunique() == 1]
-                try:
-                    self.n_target = dd[loc[-1][0]][loc[-1][1]]
-                    approved = len(self.df[(self.df['review_status']=='APPROVED')&filter_])
-                except:
-                    self.n_target = 0
-                    approved = 0
+                filter_ = location_filter
+                approved = len(self.df[(self.df['review_status']=='APPROVED') & filter_])
         else:
             if target_column is not None:
                 filter_ = self.df[target_column]==selected_category
-                self.n_target = np.sum([v for _,v in dd[selected_category]['PROV'].items()])
-                approved = len(self.df[(self.df['review_status']=='APPROVED')&(self.df[target_column]==selected_category)])
+                approved = len(self.df[(self.df['review_status']=='APPROVED') & (self.df[target_column]==selected_category)])
             else:
                 filter_ = pd.Series([True] * len(self.df))
-                self.n_target = np.sum([v for _,v in dd['PROV'].items()])
                 approved = len(self.df[self.df['review_status']=='APPROVED'])
+        # target
+        if target_column is not None:
+            if metadata_filter is not None:
+                self.n_target = self.metadata[metadata_filter][selected_category].sum()
+            else:
+                self.n_target = self.metadata[selected_category].sum()
+        else:
+            if metadata_filter is not None:
+                self.n_target = self.metadata[metadata_filter]['JML'].sum()
+            else:
+                self.n_target = self.metadata['JML'].sum()
         # deficit
         self.delta_n_target = approved - self.n_target
         self.delta_n_target = '.' if self.delta_n_target==0 else '+'+str(self.delta_n_target) if self.delta_n_target>0 else str(self.delta_n_target)
@@ -631,49 +457,45 @@ class datamart():
         self.n_enum = len(self.df[filter_].groupby(cols+['NAMA_ENUM']).size().values)
         self.n_kk = len(self.df[filter_].groupby(cols+['NAMA_KK']).size().values)
 
+    @staticmethod
+    # organize string for delta_n
+    def text_out(val):
+        out = '.' if val==0 else '+'+str(val) if val>0 else str(val)
+        return out
+
     # get number of locations
     def get_number_location(self, target_column, selected_category):
         data = self.list_surveys
         # planned
         list_location = json.loads(data['List Location'].values[0])
         if target_column is not None:
-            self.n_prov = len(list_location[selected_category]['PROV'])
-            self.n_kab = len(list_location[selected_category]['KOTA_KAB'])
-            self.n_kec = len(list_location[selected_category]['KEC'])
-            self.n_kel = len(list_location[selected_category]['KEL'])
+            list_prov = list_location[selected_category]['PROV']
+            list_kab = list_location[selected_category]['KOTA_KAB']
+            list_kec = list_location[selected_category]['KEC']
+            list_kel = list_location[selected_category]['KEL']
         else:
-            self.n_prov = len(list_location['PROV'])
-            self.n_kab = len(list_location['KOTA_KAB'])
-            self.n_kec = len(list_location['KEC'])
-            self.n_kel = len(list_location['KEL'])
-        # actual
-        actual_n_prov = self.df['PROV'].nunique()
-        actual_n_kab = self.df['KOTA_KAB'].nunique()
-        actual_n_kec = self.df['KEC'].nunique()
-        actual_n_kel = self.df['KEL'].nunique()  
-        # remove unknown location
-        if 'TIDAK DIKENALI' in self.df_rekap_prov[self.df_rekap_prov['Sample']!=0]['prov_str'].tolist():
-            actual_n_prov -= 1
-        if ['TIDAK DIKENALI', ''] in self.df['KOTA_KAB'].unique().tolist():
-            actual_n_kab -= 1
-        if ['TIDAK DIKENALI', ''] in self.df['KEC'].unique().tolist():
-            actual_n_kec -= 1
-        if ['TIDAK DIKENALI', ''] in self.df['KEL'].unique().tolist():
-            actual_n_kel -= 1
+            list_prov = list_location['PROV']
+            list_kab = list_location['KOTA_KAB']
+            list_kec = list_location['KEC']
+            list_kel = list_location['KEL']
+        self.n_prov = len(list_prov)
+        self.n_kab = len(list_kab)
+        self.n_kec = len(list_kec)
+        self.n_kel = len(list_kel)
         # difference
-        self.delta_n_prov = actual_n_prov - self.n_prov
-        self.delta_n_prov = '.' if self.delta_n_prov==0 else '+'+str(self.delta_n_prov) if self.delta_n_prov>0 else str(self.delta_n_prov)
-        self.delta_n_kab = self.n_kab - actual_n_kab
-        self.delta_n_kab = '.' if self.delta_n_kab==0 else '+'+str(self.delta_n_kab) if self.delta_n_kab>0 else str(self.delta_n_kab)
-        self.delta_n_kec = self.n_kec - actual_n_kec
-        self.delta_n_kec = '.' if self.delta_n_kec==0 else '+'+str(self.delta_n_kec) if self.delta_n_kec>0 else str(self.delta_n_kec)
-        self.delta_n_kel = self.n_kel - actual_n_kel
-        self.delta_n_kel = '.' if self.delta_n_kel==0 else '+'+str(self.delta_n_kel) if self.delta_n_kel>0 else str(self.delta_n_kel)
+        self.delta_n_prov = -len([i for i in self.df_rekap_prov[self.df_rekap_prov['Deficit']>0]['Provinsi'] if i in list_prov])
+        self.delta_n_prov = self.text_out(self.delta_n_prov)
+        self.delta_n_kab = -len([i for i in self.df_rekap_kab[self.df_rekap_kab['Deficit']>0]['Kabupaten_Kota'] if i in list_kab])
+        self.delta_n_kab = self.text_out(self.delta_n_kab)
+        self.delta_n_kec = -len([i for i in self.df_rekap_kec[self.df_rekap_kec['Deficit']>0]['Kecamatan'] if i in list_kec])
+        self.delta_n_kec = self.text_out(self.delta_n_kec)
+        self.delta_n_kel = -len([i for i in self.df_rekap_kel[self.df_rekap_kel['Deficit']>0]['Kelurahan'] if i in list_kel])
+        self.delta_n_kel = self.text_out(self.delta_n_kel)
 
     #  get list of locations
-    def get_list_location(self, target_column):
-        self.list_provinsi = sorted(self.df_rekap_prov['prov_str'].unique().tolist())
-        self.list_kab_kota = sorted(self.df_rekap_kab['Kabupaten/Kota'].unique().tolist())
+    def get_list_location(self):
+        self.list_provinsi = sorted(self.df_rekap_prov['Provinsi'].unique().tolist())
+        self.list_kab_kota = sorted(self.df_rekap_kab['Kabupaten_Kota'].unique().tolist())
         self.list_kecamatan = sorted(self.df_rekap_kec['Kecamatan'].unique().tolist())
         self.list_kelurahan = sorted(self.df_rekap_kel['Kelurahan'].unique().tolist())
 
@@ -759,11 +581,45 @@ function(params) {
     }
 };
 """)
+jscode3 = JsCode("""
+function(params) {
+    if (params.data.Sample == 0) {
+        return {
+            'color': 'black',
+            'backgroundColor': '#bbfbf9'
+        }
+    }
+    if (params.data.Target == 0) {
+        return {
+            'color': 'black',
+            'backgroundColor': '#fbbbd0'
+        }
+    }
+};
+""")
 
 # Define JS function for rendering the links in Provinsi column (Global Data Table)
-cell_renderer = JsCode("""
+cell_renderer_prov = JsCode("""
 function(params) {
     return params.data.Provinsi
+}
+""")
+# Define JS function for rendering the links in Kabupaten_Kota column (Global Data Table)
+cell_renderer_kab = JsCode("""
+function(params) {
+    return params.data.Kabupaten_Kota
+}
+""")
+# Define JS function for rendering the links in Kecamatan column (Global Data Table)
+cell_renderer_kec = JsCode("""
+function(params) {
+    return params.data.Kecamatan
+}
+""")
+# Define JS function for rendering the links in Kelurahan column (Global Data Table)
+cell_renderer_kel = JsCode("""
+function(params) {
+    return params.data.Kelurahan
 }
 """)
 
@@ -819,6 +675,7 @@ rowStyle_renderer = JsCode(
 """
 )
 
+
 # custom style metrics
 st_style = """
 <style>
@@ -842,9 +699,12 @@ header {visibility: hidden;}
 [data-testid="stMetricDelta"] svg {
     display: none;
 }
-.element-container {
-    width: 80%;
-    max-width: 80% !important;
+.appview-container .main .block-container {
+    padding-top: 0rem;
+    padding-bottom: 0rem;
+}
+.sidebar .sidebar-content {
+    font-size: 32px;
 }
 </style>
 """

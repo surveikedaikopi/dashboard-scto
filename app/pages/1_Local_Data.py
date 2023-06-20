@@ -2,7 +2,7 @@ import sys
 sys.path.append('../')
 from module import *
 import streamlit as st
-import plotly.express as px
+import plotly.graph_objects as go
 import streamlit_authenticator as stauth
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
@@ -46,9 +46,9 @@ if st.session_state.authentication_status:
     _, list_survei, update_time, target_columns = get_survey_names()
     if len(list_survei) == 0:
         st.error('Database is empty.')
+        draw_logo()
+        authenticator.logout('Logout', 'sidebar')
         st.stop()
-
-    st.session_state.tabel_rekapitulasi = True
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Initiate URL Parameters
@@ -145,7 +145,7 @@ if st.session_state.authentication_status:
     else:
         filter_ = pd.Series([True] * len(dm.df_rekap_prov))
 
-    dm.get_list_location(target_column)
+    dm.get_list_location()
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Define Filters
@@ -161,7 +161,7 @@ if st.session_state.authentication_status:
     url_params.update({'selected_provinsi': selected_provinsi})    
 
     # kab/kota
-    list_kabkota_prov = [i for i in dm.list_kab_kota if i in dm.df[dm.df['PROV']==selected_provinsi]['KOTA_KAB'].tolist()] + ['ALL']
+    list_kabkota_prov = [i for i in dm.list_kab_kota if i in dm.df_rekap_all[dm.df_rekap_all['Provinsi']==selected_provinsi]['Kabupaten_Kota'].tolist()] + ['ALL']
     if (param_kab_kota is not None) & ('change_selected_provinsi' not in st.session_state):
         selected_kab_kota = st.sidebar.selectbox('Kabupaten/Kota', list_kabkota_prov, index=list_kabkota_prov.index(param_kab_kota))
     else:
@@ -172,24 +172,24 @@ if st.session_state.authentication_status:
     url_params.update({'selected_kab_kota': selected_kab_kota}) 
 
     # kecamatan
-    list_kec_kabkota = [i for i in dm.list_kecamatan if i in dm.df[dm.df['KOTA_KAB']==selected_kab_kota]['KEC'].tolist()] + ['ALL']
+    list_kec_kabkota = [i for i in dm.list_kecamatan if i in dm.df_rekap_all[dm.df_rekap_all['Kabupaten_Kota']==selected_kab_kota]['Kecamatan'].tolist()] + ['ALL']
     if (param_kecamatan is not None) & ('change_selected_kab_kota' not in st.session_state):
         selected_kecamatan = st.sidebar.selectbox('Kecamatan', list_kec_kabkota, index=list_kec_kabkota.index(param_kecamatan))
     else:
         selected_kecamatan = st.sidebar.selectbox('Kecamatan', list_kec_kabkota, index=list_kec_kabkota.index('ALL'))
     if selected_kecamatan != param_kecamatan:
-        st.session_state.change_selected_kecamatan = True
+        st.session_state.change_selected_kecamatan = True 
     st.session_state.selected_kecamatan = selected_kecamatan
-    url_params.update({'selected_kecamatan': selected_kecamatan}) 
+    url_params.update({'selected_kecamatan': selected_kecamatan})
 
     # kelurahan
-    list_kel_kec = [i for i in dm.list_kelurahan if i in dm.df[dm.df['KEC']==selected_kecamatan]['KEL'].tolist()] + ['ALL']
+    list_kel_kec = [i for i in dm.list_kelurahan if i in dm.df_rekap_all[dm.df_rekap_all['Kecamatan']==selected_kecamatan]['Kelurahan'].tolist()] + ['ALL']
     if (param_kelurahan is not None) & ('change_selected_kecamatan' not in st.session_state):
         selected_kelurahan = st.sidebar.selectbox('Kelurahan', list_kel_kec, index=list_kel_kec.index(param_kelurahan))
     else:
-        selected_kelurahan = st.sidebar.selectbox('Kelurahan', list_kel_kec, index=list_kel_kec.index('ALL'))
+        selected_kelurahan = st.sidebar.selectbox('Kelurahan', list_kel_kec, index=list_kel_kec.index('ALL'))        
     st.session_state.selected_kelurahan = selected_kelurahan
-    url_params.update({'selected_kelurahan': selected_kelurahan}) 
+    url_params.update({'selected_kelurahan': selected_kelurahan})
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Get Selections
@@ -197,20 +197,24 @@ if st.session_state.authentication_status:
     if selected_kab_kota == 'ALL':
         selection1 = (dm.df['PROV']==selected_provinsi)
         selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi)
+        selection3 = (dm.metadata['PROV']==selected_provinsi)
     elif selected_kecamatan == 'ALL':
         selection1 = (dm.df['PROV']==selected_provinsi) & (dm.df['KOTA_KAB']==selected_kab_kota)
-        selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi) & (dm.df_rekap_all['Kabupaten/Kota']==selected_kab_kota)
+        selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi) & (dm.df_rekap_all['Kabupaten_Kota']==selected_kab_kota)
+        selection3 = (dm.metadata['PROV']==selected_provinsi) & (dm.metadata['KOTA_KAB']==selected_kab_kota)
     elif selected_kelurahan == 'ALL':
         selection1 = (dm.df['PROV']==selected_provinsi) & (dm.df['KOTA_KAB']==selected_kab_kota) & (dm.df['KEC']==selected_kecamatan)
-        selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi) & (dm.df_rekap_all['Kabupaten/Kota']==selected_kab_kota) & (dm.df_rekap_all['Kecamatan']==selected_kecamatan)
+        selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi) & (dm.df_rekap_all['Kabupaten_Kota']==selected_kab_kota) & (dm.df_rekap_all['Kecamatan']==selected_kecamatan)
+        selection3 = (dm.metadata['PROV']==selected_provinsi) & (dm.metadata['KOTA_KAB']==selected_kab_kota) & (dm.metadata['KEC']==selected_kecamatan)
     else:
         selection1 = (dm.df['PROV']==selected_provinsi) & (dm.df['KOTA_KAB']==selected_kab_kota) & (dm.df['KEC']==selected_kecamatan) & (dm.df['KEL']==selected_kelurahan)
-        selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi) & (dm.df_rekap_all['Kabupaten/Kota']==selected_kab_kota) & (dm.df_rekap_all['Kecamatan']==selected_kecamatan) & (dm.df_rekap_all['Kelurahan']==selected_kelurahan)
+        selection2 = (dm.df_rekap_all['Provinsi']==selected_provinsi) & (dm.df_rekap_all['Kabupaten_Kota']==selected_kab_kota) & (dm.df_rekap_all['Kecamatan']==selected_kecamatan) & (dm.df_rekap_all['Kelurahan']==selected_kelurahan)
+        selection3 = (dm.metadata['PROV']==selected_provinsi) & (dm.metadata['KOTA_KAB']==selected_kab_kota) & (dm.metadata['KEC']==selected_kecamatan) & (dm.metadata['KEL']==selected_kelurahan)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Local Data Mart
 
-    dm.get_total_number(selection1, target_column, selected_category)
+    dm.get_total_number(selection1, selection3, target_column, selected_category)
     dm.get_agg_status(selection1, target_column, selected_category)
 
     # ----------------------------------------------------------------------------------------------------------------------------
@@ -257,11 +261,14 @@ if st.session_state.authentication_status:
     # Review Status: Pie Chart
 
     def status_piechart(data):
-        fig = px.pie(data, values='Count', names='Status', hole=.6, color='Status', color_discrete_map=color_map2)
+        labels, values = data['Status'], data['Count']
+        fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.6, marker=dict(colors=[color_map2[label] for label in labels]))])
         fig.update_layout(
             title='Review Status' if target_column is None else f'Review Status ({selected_category})',
-            font=dict(size=16,),
-        )
+            font={'size': 16},
+            margin={'b': 0},
+            height=350
+            )
         pie1.plotly_chart(fig, use_container_width=True)
 
     status_piechart(dm.agg_status)
@@ -271,19 +278,25 @@ if st.session_state.authentication_status:
 
     if target_column is not None:
         
-        def target_piechart(data):
-            fig = px.bar(data, x='Target', y='Count', color='Status', color_discrete_map=color_map2)
+        def target_barchart(data):
+            labels = ['APPROVED', 'REJECTED', 'AWAITING']
+            list_data = [go.Bar(x=data[data['Status']==label]['Target'], y=data[data['Status']==label]['Count'], marker={'color':color_map2[label]}) for label in labels]
+            fig = go.Figure(data=list_data)
+
+            # Set layout properties for bar chart
             fig.update_layout(
                 barmode='group',
                 title='Status By Target Category',
-                showlegend=True,
-                font=dict(size=16),
-                xaxis={'categoryorder': 'total descending'}
+                showlegend=False,
+                font=dict(size=16),  # Set the font size to 16
+                xaxis=dict(categoryorder='total descending'),
+                margin=dict(b=0),
+                height=350
             )
             pie2.plotly_chart(fig, use_container_width=True)
 
         data = dm.df[selection1]
-        target_piechart(dm.get_agg_target(data, target_column))
+        target_barchart(dm.get_agg_target(data, target_column))
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Tabel Rekapitulasi
@@ -291,7 +304,7 @@ if st.session_state.authentication_status:
 
     if selected_kab_kota == 'ALL':
         title = 'Tabel Rekapitulasi Level Kabupaten / Kota'
-        filter_1 = dm.df_rekap_kab['Kabupaten/Kota'].isin(list_kabkota_prov)
+        filter_1 = dm.df_rekap_kab['Kabupaten_Kota'].isin(list_kabkota_prov)
         # category filter
         if selected_category is not None:
             filter_2 = dm.df_rekap_kab[target_column] == selected_category
@@ -328,7 +341,6 @@ if st.session_state.authentication_status:
         else:
             filter_2 = pd.Series([True] * len(dm.df_rekap_kel))
         data = dm.df_rekap_kel[filter_1 & filter_2]
-        st.session_state.tabel_rekapitulasi = False
     
     if target_column is not None:
         data = data.drop([target_column], axis=1)
@@ -346,46 +358,41 @@ if st.session_state.authentication_status:
     # ----------------------------------------------------------------------------------------------------------------------------
     # Tabel Rekapitulasi (All Levels)
 
-    if st.session_state.tabel_rekapitulasi:
-        st.markdown("---")
+    st.markdown("---")
 
-        expander = st.expander('Tabel Rekapitulasi (Level Kelurahan)')
+    expander = st.expander('Tabel Rekapitulasi (Level Kelurahan)')
 
-        with expander:
+    with expander:
 
-            data = dm.df_rekap_all
-            # category filter
-            if target_column is not None:
-                filter_ = data[target_column] == selected_category
-                title = f'Category: {selected_category}'
-                st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
-            else:
-                filter_ = pd.Series([True] * len(data))
+        data = dm.df_rekap_all
+        # category filter
+        if target_column is not None:
+            filter_ = data[target_column] == selected_category
+            title = f'Category: {selected_category}'
+            st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
+        else:
+            filter_ = pd.Series([True] * len(data))
 
-            if target_column is not None:
-                data = data.drop([target_column], axis=1)
-            data = data[selection2 & filter_]
-            height = get_table_height(data)
+        if target_column is not None:
+            data = data.drop([target_column], axis=1)
+        data = data[selection2 & filter_]
+        height = get_table_height(data)
 
-            gb = GridOptionsBuilder.from_dataframe(data)
-            gridOptions = gb.build()
-            gridOptions['getRowStyle'] = jscode2
+        gb = GridOptionsBuilder.from_dataframe(data)
+        gridOptions = gb.build()
+        gridOptions['getRowStyle'] = jscode2
 
-            AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
-                    allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True,
-                    update_mode=GridUpdateMode.VALUE_CHANGED)
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=False,
+                allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True,
+                update_mode=GridUpdateMode.VALUE_CHANGED)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Raw Table
     st.markdown("---")
 
-    with st.expander('Raw Table (Filtered)'):
+    with st.expander('Raw Table (Filtered By Region Only)'):
 
-        if target_column is not None:
-            filter_ = selection1 & (dm.df[target_column]==selected_category)
-        else:
-            filter_ = selection1
-        data = dm.df[filter_]
+        data = dm.df[selection1]
         height = get_table_height(data)
 
         gb = GridOptionsBuilder.from_dataframe(data)
@@ -393,9 +400,15 @@ if st.session_state.authentication_status:
         gridOptions = gb.build()
         gridOptions['getRowStyle'] = jscode1
 
-        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True,
-                allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True,
-                update_mode=GridUpdateMode.VALUE_CHANGED)
+        AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, allow_unsafe_jscode=True, height=height, enableSorting=True, enableFilter=True, update_mode=GridUpdateMode.VALUE_CHANGED)
+
+        # Create a download button
+        st.download_button(
+            "Download Table",
+            data=download_dataframe_as_excel(data.drop(['Link'], axis=1)),
+            file_name=f"raw_data_{selected_provinsi}_{selected_kab_kota}_{selected_kecamatan}_{selected_kelurahan}.xlsx",
+            mime="application/vnd.ms-excel",
+        )
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Last update

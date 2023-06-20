@@ -105,42 +105,60 @@ if st.session_state.authentication_status:
                         except:
                             target_column = None
                             data = pd.read_excel(uploaded_file2)
+                        regions = ['PROV', 'KOTA_KAB', 'KEC', 'KEL']
+                        data[regions] = data[regions].applymap(lambda x: x.upper() if isinstance(x, str) else x)
+                        metadata = data.copy()
                         # set empty dictionary
                         if target_column is not None:
+                            data = data.melt(id_vars=regions, value_vars=target_categories)
                             targets = {cat:{} for cat in target_categories}
                             list_location = {'all': {}}
                             list_location.update({cat:{} for cat in target_categories})
                         else:
                             targets = {}
                             list_location = {}
-                        for col in ['PROV', 'KOTA_KAB', 'KEC', 'KEL']:
-                            data[col] = data[col].str.upper()
+                        for region in regions:
                             # get target
                             if target_column is not None:
-                                list_location['all'].update({col : data[col].str.upper().unique().tolist()})
-                                list_location['all'][col].sort()
+                                list_location['all'].update({region : metadata[region].unique().tolist()})
+                                list_location['all'][region].sort()
+                                if region == 'PROV':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.variable}', axis=1)
+                                elif region == 'KOTA_KAB':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.variable}', axis=1)
+                                elif region == 'KEC':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.variable}', axis=1)
+                                elif region == 'KEL':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}_{x.variable}', axis=1)
                                 for cat in target_categories:
-                                    targets[cat].update({col : data.groupby(col).sum(cat).to_dict()[cat]})
+                                    targets[cat].update({region : data[data['variable']==cat].groupby('loc_id').sum('value').to_dict()['value']})
                                     # get list of locations
-                                    list_location[cat].update({col : data[col].str.upper().unique().tolist()})
-                                    list_location[cat][col].sort()
-                                list_not_exist = [i for i in list_location['all'][col] if i not in [j for _,j in internal_decoder[col].items()]]
+                                    list_location[cat].update({region : metadata[metadata[cat]>0][region].unique().tolist()})
+                                    list_location[cat][region].sort()
+                                list_not_exist = [i for i in list_location['all'][region] if i not in [j for _,j in internal_decoder[region].items()]]
                             else:
-                                targets.update({col : data.groupby(col).sum('JML').to_dict()['JML']})
+                                if region == 'PROV':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}', axis=1)
+                                elif region == 'KOTA_KAB':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}', axis=1)
+                                elif region == 'KEC':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}', axis=1)
+                                elif region == 'KEL':
+                                    data['loc_id'] = data.apply(lambda x : f'{x.PROV}_{x.KOTA_KAB}_{x.KEC}_{x.KEL}', axis=1)
+                                targets.update({region : data.groupby('loc_id').sum('JML').to_dict()['JML']})
                                 # get list of locations
-                                list_location.update({col : data[col].str.upper().unique().tolist()})
-                                list_location[col].sort()
-                                list_not_exist = [i for i in list_location[col] if i not in [j for _,j in internal_decoder[col].items()]]
+                                list_location.update({region : metadata[region].unique().tolist()})
+                                list_location[region].sort()
+                                list_not_exist = [i for i in list_location[region] if i not in [j for _,j in internal_decoder[region].items()]]
                             # check consistency with internal database
                             if len(list_not_exist) != 0:
-                                if col in ['PROV', 'KOTA_KAB']:
-                                    st.error(f'{list_not_exist} do not exist in {col} database')
+                                if region in ['PROV', 'KOTA_KAB']:
+                                    st.error(f'{list_not_exist} do not exist in {region} database')
                                     st.stop()
                                 else:
-                                    st.warning(f'{list_not_exist} do not exist in {col} database')
+                                    st.warning(f'{list_not_exist} do not exist in {region} database')
                         # map WILAYAH
-                        data['WILAYAH'] = data['WILAYAH'].str.upper()
-                        wilayah = data[['KEL', 'WILAYAH']].set_index('KEL').to_dict()['WILAYAH']
+                        wilayah = metadata[['KEL', 'WILAYAH']].set_index('KEL').to_dict()['WILAYAH']
                     except:
                         st.error('There is something wrong with the file structure. Please look at the given template.')
                         st.session_state.check = False
@@ -173,7 +191,7 @@ if st.session_state.authentication_status:
                             else:
                                 decoder = None
                             # data preprocessing
-                            generate_datalake(survey_name, df, list_location, targets, target_column, data)
+                            generate_datalake(survey_name, df, targets, target_column, metadata)
                             list_location = json.dumps(list_location) 
                             wilayah = json.dumps(wilayah)   
                             targets = json.dumps(targets)
