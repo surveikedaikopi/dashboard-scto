@@ -93,7 +93,8 @@ if st.session_state.authentication_status:
                 uploaded_file2 = st.file_uploader("Please follow the given template", accept_multiple_files=False, type=['xlsx'], key='uploader2')
                 if uploaded_file2 is not None:
                     # get internal decoder for sanity check
-                    internal_decoder = get_internal_decoder()
+                    with st_lottie_spinner(get_lottie_wait(), height=200, key='lottie_decoder'):
+                        internal_decoder = get_internal_decoder()
                     try:
                         # target split format
                         try:
@@ -178,7 +179,7 @@ if st.session_state.authentication_status:
                     st.warning('fix the error')
                 else:
                     # download process
-                    with st_lottie_spinner(get_lottie_wait(), height=200):
+                    with st_lottie_spinner(get_lottie_wait(), height=200, key='lottie_download'):
                         try:
                             # download data
                             if 'decoder' in st.session_state:
