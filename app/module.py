@@ -127,7 +127,7 @@ def download_data(form_id, wilayah, decoder):
     # used fields
     if 'CATATAN_QC' not in df.columns:
         df['CATATAN_QC'] = ''
-    usecols = ['CATATAN_QC', 'PROV', 'KOTA_KAB', 'KEC', 'KEC_LAINNYA', 'KEL', 'KEL_LAINNYA', 'RW', 'RT', 'NAMA_KK', 'NAMA_RESPONDEN', 'USIA_KAT', 'NAMA_ENUM', 'JK', 'WILAYAH', 'review_status', 'KEY']
+    usecols = ['CATATAN_QC', 'PROV', 'KOTA_KAB', 'KEC', 'KEC_LAINNYA', 'KEL', 'KEL_LAINNYA', 'RW', 'RT', 'NAMA_KK', 'NAMA_RESPONDEN', 'NAMA_ENUM', 'JK', 'WILAYAH', 'review_status', 'KEY']
     cols_X = ['_'.join(i.split('_')[:-1]) for i in df.columns if i.split('_')[-1]=='X']
     usecols += [i for i in cols_X if i not in usecols]
     # remove suffix 'X'
