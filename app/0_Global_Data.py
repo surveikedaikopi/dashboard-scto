@@ -435,9 +435,9 @@ if st.session_state.authentication_status:
         st.markdown(f"<h6>{title}</h6>", unsafe_allow_html=True)
 
         data = dm.df_rekap_prov[filter_].sort_values('Provinsi')
-        data['Provinsi'] = get_link('Provinsi', data, nama_survei, selected_category)
         dropcols = ['Approved_percent', 'Rejected_percent', 'Awaiting_percent', 'Target_percent']
         data_download = data.drop(dropcols, axis=1)
+        data['Provinsi'] = get_link('Provinsi', data, nama_survei, selected_category)
         if target_column is not None:
             dropcols += [target_column]
         data = data.drop(dropcols, axis=1)
