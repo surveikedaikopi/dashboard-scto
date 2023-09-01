@@ -536,28 +536,30 @@ if st.session_state.authentication_status:
         with tab2:
             usecols = ['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan', 'Target', 'Sample', 'Approved']
             data = dm.df_rekap_all[dm.df_rekap_all['Kelurahan'].duplicated(keep=False)][usecols].sort_values('Kelurahan')
-            data['Kelurahan'] = data.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
-            height = get_table_height(data)
-            gb = GridOptionsBuilder.from_dataframe(data)
-            gb.configure_column('Kelurahan', cellRenderer=cell_renderer_kel)
-            gb.configure_columns(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'], pinned='left')
-            gridOptions = gb.build()
-            AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
-                    allow_unsafe_jscode=True, height=height, 
-                    update_mode=GridUpdateMode.VALUE_CHANGED)
+            if len(data) > 0:
+                data['Kelurahan'] = data.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
+                height = get_table_height(data)
+                gb = GridOptionsBuilder.from_dataframe(data)
+                gb.configure_column('Kelurahan', cellRenderer=cell_renderer_kel)
+                gb.configure_columns(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'], pinned='left')
+                gridOptions = gb.build()
+                AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
+                        allow_unsafe_jscode=True, height=height, 
+                        update_mode=GridUpdateMode.VALUE_CHANGED)
 
         # Zero Target
         with tab3:
             data = dm.df_rekap_all[dm.df_rekap_all['Target']==0][usecols].sort_values('Kelurahan')
-            data['Kelurahan'] = data.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
-            height = get_table_height(data)
-            gb = GridOptionsBuilder.from_dataframe(data)
-            gb.configure_column('Kelurahan', cellRenderer=cell_renderer_kel)
-            gb.configure_columns(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'], pinned='left')
-            gridOptions = gb.build()
-            AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
-                    allow_unsafe_jscode=True, height=height, 
-                    update_mode=GridUpdateMode.VALUE_CHANGED)
+            if len(data) > 0:
+                data['Kelurahan'] = data.apply(lambda x : f'<a href="{DASHBOARD_HOST}/Local_Data?selected_provinsi={x.Provinsi}&selected_kab_kota={x.Kabupaten_Kota}&selected_kecamatan={x.Kecamatan}&selected_kelurahan={x.Kelurahan}&nama_survei={nama_survei}&selected_category={selected_category}" target="_blank">{x.Kelurahan}</a>', axis=1)
+                height = get_table_height(data)
+                gb = GridOptionsBuilder.from_dataframe(data)
+                gb.configure_column('Kelurahan', cellRenderer=cell_renderer_kel)
+                gb.configure_columns(['Provinsi', 'Kabupaten_Kota', 'Kecamatan', 'Kelurahan'], pinned='left')
+                gridOptions = gb.build()
+                AgGrid(data, gridOptions=gridOptions, enable_enterprise_modules=True, fit_columns_on_grid_load=True,
+                        allow_unsafe_jscode=True, height=height, 
+                        update_mode=GridUpdateMode.VALUE_CHANGED)
 
     # ----------------------------------------------------------------------------------------------------------------------------
     # Rejected Enumerators

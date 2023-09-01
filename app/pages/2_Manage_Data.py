@@ -70,6 +70,7 @@ if st.session_state.authentication_status:
 
             # Get survey name & form id
             survey_name = st.text_input("Survey Name:", key='survey_name')
+            survey_name = survey_name.replace(" ", "_")
             form_id = st.text_input("Form ID:", key='form_id')
 
             # Get decoders
