@@ -3,7 +3,6 @@ os.chdir('/app')
 import time
 import json
 import sqlite3
-import schedule
 import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
@@ -70,19 +69,7 @@ def update():
 
 # ------------------------------------------------------------------------------------
 
-# Schedule the job to run every hour
-schedule.every().hour.do(update)
-
-# # Set the start and end time for the schedule
-# for i in range(6,22):
-#     if i < 10:
-#         schedule.every().day.at(f"0{i}:00").do(update)
-#         # schedule.every().day.at(f"0{i}:30").do(update)
-#     else:
-#         schedule.every().day.at(f"{i}:00").do(update)
-#         # schedule.every().day.at(f"{i}:30").do(update)
-
 # Run the scheduler continuously
 while True:
-    schedule.run_pending()
-    time.sleep(1)
+    update()
+    time.sleep(3600)
