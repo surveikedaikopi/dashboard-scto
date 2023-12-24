@@ -181,30 +181,30 @@ if st.session_state.authentication_status:
                 else:
                     # download process
                     with st_lottie_spinner(get_lottie_wait(), height=200, key='lottie_download'):
-                        try:
-                            # download data
-                            if 'decoder' in st.session_state:
-                                df = download_data(form_id, wilayah, st.session_state.decoder)
-                            else:
-                                df = download_data(form_id, wilayah, None)
+                        # try:
+                        # download data
+                        if 'decoder' in st.session_state:
+                            df = download_data(form_id, wilayah, st.session_state.decoder)
+                        else:
+                            df = download_data(form_id, wilayah, None)
 
-                            if 'decoder' in st.session_state:
-                                decoder = st.session_state.decoder
-                            else:
-                                decoder = None
-                            # data preprocessing
-                            generate_datalake(survey_name, df, targets, target_column, metadata)
-                            list_location = json.dumps(list_location) 
-                            wilayah = json.dumps(wilayah)   
-                            targets = json.dumps(targets)
-                            if decoder is not None:
-                                decoder = json.dumps(decoder)
-                            # insert survey_name into 'list_surveys' table
-                            update_surveys_table(survey_name, form_id, list_location, wilayah, targets, target_column, decoder)            
-                            # Reload table
-                            surveys_df, _, _, _ = get_survey_names()
-                        except:
-                            st.error('Possible errors: form_id is wrong, SurveyCTO service cannot be accessed or target is incorrect.')
+                        if 'decoder' in st.session_state:
+                            decoder = st.session_state.decoder
+                        else:
+                            decoder = None
+                        # data preprocessing
+                        generate_datalake(survey_name, df, targets, target_column, metadata)
+                        list_location = json.dumps(list_location) 
+                        wilayah = json.dumps(wilayah)   
+                        targets = json.dumps(targets)
+                        if decoder is not None:
+                            decoder = json.dumps(decoder)
+                        # insert survey_name into 'list_surveys' table
+                        update_surveys_table(survey_name, form_id, list_location, wilayah, targets, target_column, decoder)            
+                        # Reload table
+                        surveys_df, _, _, _ = get_survey_names()
+                        # except:
+                            # st.error('Possible errors: form_id is wrong, SurveyCTO service cannot be accessed or target is incorrect.')
 
         # ------------------------------------------------------------------------------------------------------------
         # Show Surveys Table
