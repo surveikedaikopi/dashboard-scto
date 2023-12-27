@@ -86,8 +86,8 @@ if st.session_state.authentication_status:
                             out = out.set_index('CODE').to_dict()['LABEL']
                             decoder.update({f: out})
                             st.session_state.decoder = decoder
-                    except:
-                        st.error('There is something wrong with the file structure. Please look at the given template.')
+                    except Exception as e:
+                        st.error(f'There is something wrong with the file structure. Please look at the given template.\nError: {e}')
 
             # Get target sample
             with st.expander('Sample Target'):
@@ -161,8 +161,8 @@ if st.session_state.authentication_status:
                                     st.warning(f'{list_not_exist} do not exist in {region} database')
                         # map WILAYAH
                         wilayah = metadata[['KEL', 'WILAYAH']].set_index('KEL').to_dict()['WILAYAH']
-                    except:
-                        st.error('There is something wrong with the file structure. Please look at the given template.')
+                    except Exception as e:
+                        st.error(f'There is something wrong with the file structure. Please look at the given template.\nError: {e}')
                         st.session_state.check = False
 
         # ------------------------------------------------------------------------------------------------------------
@@ -203,8 +203,8 @@ if st.session_state.authentication_status:
                             update_surveys_table(survey_name, form_id, list_location, wilayah, targets, target_column, decoder)            
                             # Reload table
                             surveys_df, _, _, _ = get_survey_names()
-                        except:
-                            st.error('Possible errors: form_id is wrong, SurveyCTO service cannot be accessed or target is incorrect.')
+                        except Exception as e:
+                            st.error(f'Possible errors: form_id is wrong, SurveyCTO service cannot be accessed or target is incorrect.\nError: {e}')
 
         # ------------------------------------------------------------------------------------------------------------
         # Show Surveys Table
