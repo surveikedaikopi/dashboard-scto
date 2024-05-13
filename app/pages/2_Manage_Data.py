@@ -238,6 +238,9 @@ if st.session_state.authentication_status:
         if np.sum(selected_rows) > 0:
             if st.button("Delete"):
                 delete_rows_surveys(surveys_df, selected_rows)
+                # Update session state by excluding 'nama_survei'
+                if 'nama_survei' in st.session_state:
+                    del st.session_state.nama_survei
                 st.cache_data.clear()
                 st.experimental_rerun()
             
